@@ -49,7 +49,7 @@ class TestPhotoMan(unittest.TestCase):
 
   @patch('os.mkdir')
   def test_tree_setup(self, mkdir):
-    photoman.tree_setup("/tmp/foo")
+    photoman.tree_setup('/tmp/foo')
     self.assertEquals(2, mkdir.call_count)
 
 
