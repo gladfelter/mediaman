@@ -2,6 +2,7 @@
 import unittest
 from mock import *
 import sqlite3
+import datetime
 import os
 import time
 import photoman
@@ -76,6 +77,7 @@ class TestPhoto(unittest.TestCase):
     self.photo = photoman.Photo('/tmp/foo.jpg')
     self.time_struct = time.strptime('2012-08-19 15:14:04', '%Y-%m-%d %H:%M:%S')
     self.timestamp = time.mktime(self.time_struct)
+    self.datetime_obj = datetime.datetime.fromtimestamp(self.timestamp)
     pass
 
   @patch('pyexiv2.ImageMetadata')
@@ -110,7 +112,7 @@ class TestPhoto(unittest.TestCase):
   def test_load_exif_timestamp(self):
     m = MagicMock(spec_set=['__getitem__'])
     image_keys = ['Exif.Image.DateTimeOriginal']
-    m.__getitem__.return_value.value = '2012-08-19 15:14:04'
+    m.__getitem__.return_value.value = self.datetime_obj
     self.photo._load_exif_timestamp(m, image_keys)
     self.assertEquals(self.timestamp, self.photo.timestamp)
 
@@ -153,7 +155,8 @@ class PhotoManFunctionalTests(unittest.TestCase):
       photoman.read_photos(srcdir, mediadir)
       self._printTree(tmpdir)
     finally:
-      shutil.rmtree(tmpdir)
+      pass
+      #shutil.rmtree(tmpdir)
 
   def _printTree(self, basedir):
     print basedir + '/'
@@ -166,8 +169,6 @@ class PhotoManFunctionalTests(unittest.TestCase):
         dirs.append(full_path)
     for dirname in dirs:
       self._printTree(dirname)
-
-
       
 
 if __name__ == '__main__':

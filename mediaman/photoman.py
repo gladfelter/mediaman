@@ -1,3 +1,4 @@
+#! /usr/bin/python
 
 import sys
 import os
@@ -9,9 +10,17 @@ import hashlib
 import logging
 import pyexiv2
 import datetime
+import gflags
 from exceptions import IOError
 from logging import StreamHandler
 from sqlite3 import dbapi2 as sqlite
+
+gflags.DEFINE_string('src_dir', None, 'Directory to scan for photos')
+gflags.DEFINE_string('media_dir', None, 'Directory of media library')
+gflags.MarkFlagAsRequired('src_dir')
+gflags.MarkFlagAsRequired('media_dir')
+
+FLAGS = gflags.FLAGS
 
 class Repository():
 
@@ -31,12 +40,14 @@ class Repository():
         (id integer primary key,
         flags text,
         md5 varchar(16),
-        constraint 'md5_UNIQUE' unique ('md5')
         size integer,
         description text,
         source_info text,
         source_path text,
-        timestamp integer)
+        timestamp integer,
+        camera_make text,
+        camera_model text,
+        unique (md5) on conflict replace);
         ''')
     else:  
       self.con = sqlite.connect(lib_base_dir + "/media.db")
@@ -52,10 +63,10 @@ class Repository():
     cur.execute('''
         insert into photos (flags, md5, size, description, source_info,
         camera_make, camera_model, source_path, timestamp)
-        values (?, ?, ?, ?, ?, ?, ?)''',
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
         (photo.flags, photo.md5, photo.size, photo.description,
         photo.source_info, photo.camera_make, photo.camera_model,
-        photo.source_path, photo.timestamp)
+        photo.dest_path, photo.timestamp)
     )
     self.con.commit()
     return cur.lastrowid
@@ -181,27 +192,30 @@ def read_photos(search_dir, lib_base_dir):
         dest_photo = Photo(photo.dest_path)
         dest_photo.load_metadata()
         if dest_photo.md5 is not None and dest_photo.md5 == photo.md5:
-          logging.info('%s was successfully copied to destination %s, ' +
-                       'deleting the source file %s.'
-                       % (photo.source_path, photo.dest_path))
+          print 'photo.source_path = ', photo.source_path
+          print 'photo.dest_path = ', photo.dest_path
+          logging.info(('%s was successfully copied to destination %s, ' +
+                       'deleting the source file %s.')
+                       % (photo.source_path, photo.dest_path,
+                          photo.source_path))
           os.remove(photo.source_path)
         else:
-          logging.warning('Destination photo file %s didn''t match ' +
+          logging.warning(('Destination photo file %s didn''t match ' +
                           'the hash of or wasn''t properly transferred ' +
-                          'from %s' % (photo.dest_path, photo.source_path))
+                          'from %s') % (photo.dest_path, photo.source_path))
       else:
-        logging.warning('%s was not copied to %s or it failed to be ' +
+        logging.warning(('%s was not copied to %s or it failed to be ' +
                         'inserted into the database, skipping deletion ' +
-                        'of the original'
+                        'of the original')
                         % (photo.source_path, photo.dest_path))
     else:
-      logging.warning('Found a non-file when looking for photos: %s, ' +
-                      'it will not be modified' % (path,))
+      logging.warning(('Found a non-file when looking for photos: %s, ' +
+                      'it will not be modified') % path)
 
 
 def copy_photo(photo, lib_base_dir):
   relative_path = "%04d/%02d/%s" % photo.get_path_parts()
-  dest_path = os.path.join(lib_base_dir, relative_path)
+  dest_path = os.path.join(lib_base_dir, 'photos', relative_path)
   photo.dest_path = dest_path
   dest_dir = os.path.dirname(photo.dest_path)
   if not os.path.exists(dest_dir):
@@ -225,3 +239,16 @@ def configure_logging():
   fh.setFormatter(formatter)
   root.addHandler(fh)
   root.setLevel(logging.WARNING)
+
+
+def main(argv):
+  try:
+    argv = FLAGS(argv)  # parse flags
+  except gflags.FlagsError, e:
+    print '%s\nUsage: %s ARGS\n%s' % (e, sys.argv[0], FLAGS)
+    sys.exit(1)
+  configure_logging()
+  read_photos(FLAGS.src_dir, FLAGS.media_dir)
+
+if __name__ == '__main__':
+  main(sys.argv)
