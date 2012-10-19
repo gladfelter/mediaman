@@ -74,22 +74,22 @@ INSERT OR REPLACE INTO photos (id, flags, md5, size, description,
                                source_info, camera_make,
                                camera_model, source_path,
                                timestamp)
-SELECT old.id, old.flags, old.md5, old.size, old.description,
+SELECT old.id, old.flags, new.md5, new.size, old.description,
        old.source_info, new.camera_make, new.camera_model,
        new.source_path, new.timestamp
 FROM ( SELECT
-     ?           AS md5,
-     ?           AS camera_make,
-     ?           AS camera_model,
-     ?           AS source_path,
-     ?           AS timestamp
+     :md5             AS md5,
+     :size            AS size,
+     :camera_make     AS camera_make,
+     :camera_model    AS camera_model,
+     :source_path     AS source_path,
+     :timestamp       AS timestamp
  ) AS new
 LEFT JOIN (
-           SELECT id, flags, md5, size, description, source_info
+           SELECT id, flags, description, source_info, md5
            FROM photos
 ) AS old ON new.md5 = old.md5;
-                ''', [photo.md5, photo.camera_make, photo.camera_model,
-                photo.dest_path, photo.timestamp])
+                ''', photo.__dict__)
     self.con.commit()
     return cur.lastrowid
 
@@ -98,7 +98,7 @@ LEFT JOIN (
     cur = self.con.cursor()
     cur.execute('''
         DELETE FROM photos WHERE md5 = ?''',
-        photo.md5)
+        [photo.md5])
 
   def lookup_hash(self, md5):
     """Returns the filepath and id of the existing file with the
@@ -241,7 +241,7 @@ def _find_and_archive_photos(search_dir,
       photo.load_metadata()
       db_result = rep.lookup_hash(photo.md5)
       if (db_result is not None
-          and os.path.isfile(photo.source_path)
+          and os.path.isfile(db_result[1])
           and delete_source_on_success):
         # file is a duplicate and the original is still around
         logging.info('deleting the source file %s, which is a ' +
@@ -249,16 +249,16 @@ def _find_and_archive_photos(search_dir,
                      photo.source_path, db_result[1])
         os.remove(photo.source_path)
       elif (db_result is not None
-            and os.path.isfile(photo.source_path)):
+            and os.path.isfile(db_result[1])):
         # same as above, but client didn't request deletion
         logging.info('ignoring the source file %s, which is a ' +
                      'duplicate of existing file %s',
                      photo.source_path, db_result[1])
       elif db_result is not None:
         # file was deleted from archive, remove it from repository
-        logging.info('Photo %s was deleted from the archive, removing' +
-                     ' from the database.', db_result[1])
-        rep.remove(photo)
+        logging.info('Photo %s was deleted from the archive, replacing' +
+                     ' it with the new one.', db_result[1])
+        _archive_photo(photo, lib_base_dir, rep, delete_source_on_success)
       else:
         _archive_photo(photo, lib_base_dir, rep, delete_source_on_success)
     else:
@@ -318,6 +318,12 @@ def _copy_photo(photo, lib_base_dir):
 def _get_month_name(month):
   """Returns a month identifier for a given decimal month"""
   return "%02d_%s" % (month, calendar.month_name[month])
+
+
+def _remove_nonexistent_photos(lib_base_dir):
+  rep = Repository()
+  rep.open(lib_base_dir)
+  # TODO(david): Search the photos dir and remove missing photos from db
 
 
 def _configure_logging():
