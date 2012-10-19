@@ -21,6 +21,7 @@ gflags.DEFINE_string('src_dir', None, 'Directory to scan for photos')
 gflags.DEFINE_string('media_dir', None, 'Directory of media library')
 gflags.DEFINE_boolean('del_src', False, 'Delete the source image if' +
                       ' succesfully archived')
+
 gflags.MarkFlagAsRequired('src_dir')
 gflags.MarkFlagAsRequired('media_dir')
 
@@ -65,26 +66,53 @@ class Repository():
     """Closes the repository."""
     self.con.close()
   
-  def add(self, photo):
+  def add_or_update(self, photo):
     """Adds a photo to the repository."""
     cur = self.con.cursor()
     cur.execute('''
-        insert into photos (flags, md5, size, description, source_info,
-        camera_make, camera_model, source_path, timestamp)
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-        (photo.flags, photo.md5, photo.size, photo.description,
-        photo.source_info, photo.camera_make, photo.camera_model,
-        photo.dest_path, photo.timestamp)
-    )
+INSERT OR REPLACE INTO photos (id, flags, md5, size, description,
+                               source_info, camera_make,
+                               camera_model, source_path,
+                               timestamp)
+SELECT old.id, old.flags, old.md5, old.size, old.description,
+       old.source_info, new.camera_make, new.camera_model,
+       new.source_path, new.timestamp
+FROM ( SELECT
+     ?           AS md5,
+     ?           AS camera_make,
+     ?           AS camera_model,
+     ?           AS source_path,
+     ?           AS timestamp
+ ) AS new
+LEFT JOIN (
+           SELECT id, flags, md5, size, description, source_info
+           FROM photos
+) AS old ON new.md5 = old.md5;
+                ''', [photo.md5, photo.camera_make, photo.camera_model,
+                photo.dest_path, photo.timestamp])
     self.con.commit()
     return cur.lastrowid
 
-  def is_hash_present(self, md5):
-    """Returns true a photo already has the specified hash"""
+  def remove(self, photo):
+    """Removes a photo from the repository."""
     cur = self.con.cursor()
+    cur.execute('''
+        DELETE FROM photos WHERE md5 = ?''',
+        photo.md5)
+
+  def lookup_hash(self, md5):
+    """Returns the filepath and id of the existing file with the
+    provided hash, or None if no such file exists"""
+    cur = self.con.cursor()
+    logging.info('looking for hash %s', md5)
     rows = cur.execute('''
-        from photos select id where md5=?''', md5)
-    return len(rows) > 0
+        SELECT id, source_path FROM photos WHERE md5 = :md5 ''', locals())
+    row = rows.fetchone()
+    if row != None:
+      logging.debug('Fond row object %s', row)
+      return row
+
+    return None
 
   @staticmethod
   def _tree_setup(lib_base_dir):
@@ -193,9 +221,15 @@ class Photo():
     return (metadata.hexdigest())
 
 
-def _read_photos(search_dir, lib_base_dir):
+def _find_and_archive_photos(search_dir,
+                             lib_base_dir,
+                             delete_source_on_success):
   """Sets up or opens a media library and adds new photos
-  to the library and its database."""
+  to the library and its database.
+  
+  The source image files will be deleted if --del_src is
+  specified.
+  """
   rep = Repository()
   rep.open(lib_base_dir)
   photos = os.listdir(search_dir)
@@ -205,35 +239,69 @@ def _read_photos(search_dir, lib_base_dir):
     if os.path.isfile(path):
       photo = Photo(path)
       photo.load_metadata()
-      _copy_photo(photo, lib_base_dir)
-      photo.db_id = rep.add(photo)
-      if photo.db_id > 0 and os.path.isfile(photo.dest_path):
-        dest_photo = Photo(photo.dest_path)
-        dest_photo.load_metadata()
-        if dest_photo.md5 is not None and dest_photo.md5 == photo.md5:
-          logging.info('%s was successfully copied to destination %s', 
-                       photo.source_path, photo.dest_path)
-          if FLAGS.del_src:
-            logging.info('deleting the source file %s.',
-                         photo.source_path)
-            os.remove(photo.source_path)
-        else:
-          logging.warning('Destination photo file %s didn''t match ' +
-                          'the hash of or wasn''t properly transferred ' +
-                          'from %s', photo.dest_path, photo.source_path)
+      db_result = rep.lookup_hash(photo.md5)
+      if (db_result is not None
+          and os.path.isfile(photo.source_path)
+          and delete_source_on_success):
+        # file is a duplicate and the original is still around
+        logging.info('deleting the source file %s, which is a ' +
+                     'duplicate of existing file %s',
+                     photo.source_path, db_result[1])
+        os.remove(photo.source_path)
+      elif (db_result is not None
+            and os.path.isfile(photo.source_path)):
+        # same as above, but client didn't request deletion
+        logging.info('ignoring the source file %s, which is a ' +
+                     'duplicate of existing file %s',
+                     photo.source_path, db_result[1])
+      elif db_result is not None:
+        # file was deleted from archive, remove it from repository
+        logging.info('Photo %s was deleted from the archive, removing' +
+                     ' from the database.', db_result[1])
+        rep.remove(photo)
       else:
-        logging.warning('%s was not copied to %s or it failed to be ' +
-                        'inserted into the database, skipping deletion ' +
-                        'of the original',
-                        photo.source_path, photo.dest_path)
+        _archive_photo(photo, lib_base_dir, rep, delete_source_on_success)
     else:
       logging.warning('Found a non-file when looking for photos: %s, ' +
                       'it will not be modified', path)
 
   rep.close()
 
+
+def _archive_photo(photo,
+                   lib_base_dir,
+                   repository,
+                   delete_source_on_success):
+  """Copies the photo to the archive and adds it to the repository.
+
+  The source file will be deleted if it was successfully archived
+  and the --del_src flag is specified.
+  """
+  _copy_photo(photo, lib_base_dir)
+  photo.db_id = repository.add_or_update(photo)
+  if photo.db_id > 0 and os.path.isfile(photo.dest_path):
+    dest_photo = Photo(photo.dest_path)
+    dest_photo.load_metadata()
+    if dest_photo.md5 is not None and dest_photo.md5 == photo.md5:
+      logging.info('%s was successfully copied to destination %s', 
+                   photo.source_path, photo.dest_path)
+      if delete_source_on_success:
+        logging.info('deleting the source file %s.',
+                     photo.source_path)
+        os.remove(photo.source_path)
+    else:
+      logging.warning('Destination photo file %s didn''t match ' +
+                      'the hash of or wasn''t properly transferred ' +
+                      'from %s', photo.dest_path, photo.source_path)
+  else:
+    logging.warning('%s was not copied to %s or it failed to be ' +
+                    'inserted into the database, skipping deletion ' +
+                    'of the original',
+                    photo.source_path, photo.dest_path)
+
+
 def _copy_photo(photo, lib_base_dir):
-  """Copies a photo file to its destination, computing the destionation
+  """Copies a photo file to its destination, computing the destination
   from the file's metadata"""
   parts = photo.get_path_parts()
   relative_path = "%04d/%s/%s" % (parts[0], _get_month_name(parts[1]),
@@ -243,7 +311,8 @@ def _copy_photo(photo, lib_base_dir):
   dest_dir = os.path.dirname(photo.dest_path)
   if not os.path.exists(dest_dir):
     os.makedirs(dest_dir)
-  shutil.copy(photo.source_path, photo.dest_path)
+  if photo.source_path != photo.dest_path:
+    shutil.copy(photo.source_path, photo.dest_path)
 
 
 def _get_month_name(month):
@@ -262,7 +331,7 @@ def _configure_logging():
   file_handler = logging.FileHandler('/var/tmp/photoman.log')
   file_handler.setFormatter(formatter)
   root.addHandler(file_handler)
-  root.setLevel(logging.WARNING)
+  root.setLevel(logging.INFO)
 
 
 def _main(argv):
@@ -273,7 +342,7 @@ def _main(argv):
     print '%s\nUsage: %s ARGS\n%s' % (error, sys.argv[0], FLAGS)
     sys.exit(1)
   _configure_logging()
-  _read_photos(FLAGS.src_dir, FLAGS.media_dir)
+  _find_and_archive_photos(FLAGS.src_dir, FLAGS.media_dir, FLAGS.del_src)
 
 if __name__ == '__main__':
   _main(sys.argv)

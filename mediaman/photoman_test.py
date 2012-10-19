@@ -66,10 +66,24 @@ class TestRepository(unittest.TestCase):
     photo = Mock()
     rep.con = Mock()
     rep.con.cursor.return_value.lastrowid = 42
-    self.assertEquals(42, rep.add(photo))
+    self.assertEquals(42, rep.add_or_update(photo))
     self.assertTrue(rep.con.cursor.called)
     self.assertTrue(rep.con.cursor.return_value.execute.called)
     self.assertTrue(rep.con.commit.called)
+
+  def test_lookup_hash(self):
+    rep = photoman.Repository()
+    rep.con = MagicMock()
+    fetch_mock = rep.con.cursor.return_value.execute.return_value.fetchone
+    fetch_mock.return_value = (42, '/tmp/foo')
+    self.assertEquals('/tmp/foo', rep.lookup_hash('bar')[1])
+
+  def test_lookup_hash_not_found(self):
+    rep = photoman.Repository()
+    rep.con = MagicMock()
+    fetch_mock = rep.con.cursor.return_value.execute.return_value.fetchone
+    fetch_mock.return_value = None
+    self.assertEquals(None, rep.lookup_hash('bar'))
 
 
 class TestPhoto(unittest.TestCase):
@@ -102,8 +116,9 @@ class TestPhoto(unittest.TestCase):
       with patch.object(self.photo, '_load_camera_make') as cmake:
         with patch.object(self.photo, '_load_camera_model') as cmodel:
           with patch.object(self.photo, '_load_file_size') as fs:
-            with patch.object(self.photo, '_load_filesystem_timestamp') as fts:
-              with patch.object(self.photo, '_get_hash') as fts:
+            with patch.object(self.photo,
+                              '_load_filesystem_timestamp') as fts:
+              with patch.object(self.photo, '_get_hash') as gh:
                 self.photo.load_metadata()
                 self.assertTrue(ts.called)
                 self.assertTrue(self.photo._load_camera_make.called)
@@ -140,26 +155,70 @@ class TestPhoto(unittest.TestCase):
 class PhotoManFunctionalTests(unittest.TestCase):
 
   def testNewDatabase(self):
-    scriptdir = os.path.dirname(os.path.realpath(__file__))
-    test_data_dir = os.path.join(scriptdir, 'test')
-    tmpdir = tempfile.mkdtemp()
     try:
-      srcdir = os.path.join(tmpdir, 'src')
-      destdir = os.path.join(tmpdir, 'dest')
-      mediadir = os.path.join(destdir, 'media')
-      os.mkdir(srcdir)
-      os.mkdir(destdir)
-      test_files = glob.glob(os.path.join(test_data_dir, '*.jpg'))
-      test_files += glob.glob(os.path.join(test_data_dir, '*.JPG'))
-      for test_file in test_files:
-        shutil.copy(test_file, srcdir)
-      photoman._read_photos(srcdir, mediadir)
-      self._printTree(tmpdir)
+      (srcdir, mediadir, tmpdir) = self._setup_test_data()
+      photoman._find_and_archive_photos(srcdir, mediadir, False)
+      print 'testNewDatabase Result'
+      self._print_tree(tmpdir)
     finally:
-      pass
       shutil.rmtree(tmpdir)
 
-  def _printTree(self, basedir):
+  def testNewDatabaseDeleteSource(self):
+    try:
+      (srcdir, mediadir, tmpdir) = self._setup_test_data()
+      photoman._find_and_archive_photos(srcdir, mediadir, True)
+      print 'testNewDatabaseDeleteSource Result'
+      self._print_tree(tmpdir)
+    finally:
+      shutil.rmtree(tmpdir)
+
+  def testDuplicateFiles(self):
+    try:
+      (srcdir, mediadir, tmpdir) = self._setup_test_data()
+      photoman._find_and_archive_photos(srcdir, mediadir, True)
+      self._copy_test_images(srcdir, 'dup_')
+      photoman._find_and_archive_photos(srcdir, mediadir, False)
+      print 'testDuplicatefiles Result'
+      self._print_tree(tmpdir)
+    finally:
+      shutil.rmtree(tmpdir)
+
+  def testQueryHash(self):
+    try:
+      (srcdir, mediadir, tmpdir) = self._setup_test_data()
+      photoman._find_and_archive_photos(srcdir, mediadir, True)
+      rep = photoman.Repository()
+      rep.open(mediadir)
+      cur = rep.con.cursor()
+      rows = cur.execute('''
+        SELECT md5, source_path FROM photos WHERE id = 1''')
+      row = rows.fetchone()
+      print 'Row =', row
+      self.assertNotEquals(None, row)
+    finally:
+      shutil.rmtree(tmpdir)
+
+  def _setup_test_data(self):
+    tmpdir = tempfile.mkdtemp()
+    srcdir = os.path.join(tmpdir, 'src')
+    destdir = os.path.join(tmpdir, 'dest')
+    mediadir = os.path.join(destdir, 'media')
+    os.mkdir(srcdir)
+    os.mkdir(destdir)
+    self._copy_test_images(srcdir, '')
+    return (srcdir, mediadir, tmpdir)
+
+  def _copy_test_images(self, srcdir, prefix):
+    scriptdir = os.path.dirname(os.path.realpath(__file__))
+    test_data_dir = os.path.join(scriptdir, 'test')
+    test_files = glob.glob(os.path.join(test_data_dir, '*.jpg'))
+    test_files += glob.glob(os.path.join(test_data_dir, '*.JPG'))
+    for test_file in test_files:
+      shutil.copy(test_file,
+                  os.path.join(srcdir,
+                               prefix + os.path.basename(test_file)))
+    
+  def _print_tree(self, basedir):
     print basedir + '/'
     dirs = []
     for obj in os.listdir(basedir):
@@ -169,7 +228,7 @@ class PhotoManFunctionalTests(unittest.TestCase):
       elif os.path.isdir(full_path):
         dirs.append(full_path)
     for dirname in dirs:
-      self._printTree(dirname)
+      self._print_tree(dirname)
       
 
 if __name__ == '__main__':
