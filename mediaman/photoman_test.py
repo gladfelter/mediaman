@@ -1,15 +1,16 @@
 #! /usr/bin/python
-import unittest
-from mock import *
-import sqlite3
+
 import datetime
+import glob
 import os
-import time
 import photoman
 import pyexiv2
-import tempfile
-import glob
 import shutil
+import sqlite3
+import tempfile
+import time
+import unittest
+from mock import *
 
 
 class TestRepository(unittest.TestCase):
@@ -102,7 +103,7 @@ class TestPhoto(unittest.TestCase):
         with patch.object(self.photo, '_load_camera_model') as cmodel:
           with patch.object(self.photo, '_load_file_size') as fs:
             with patch.object(self.photo, '_load_filesystem_timestamp') as fts:
-              with patch.object(self.photo, 'get_hash') as fts:
+              with patch.object(self.photo, '_get_hash') as fts:
                 self.photo.load_metadata()
                 self.assertTrue(ts.called)
                 self.assertTrue(self.photo._load_camera_make.called)
@@ -152,11 +153,11 @@ class PhotoManFunctionalTests(unittest.TestCase):
       test_files += glob.glob(os.path.join(test_data_dir, '*.JPG'))
       for test_file in test_files:
         shutil.copy(test_file, srcdir)
-      photoman.read_photos(srcdir, mediadir)
+      photoman._read_photos(srcdir, mediadir)
       self._printTree(tmpdir)
     finally:
       pass
-      #shutil.rmtree(tmpdir)
+      shutil.rmtree(tmpdir)
 
   def _printTree(self, basedir):
     print basedir + '/'
