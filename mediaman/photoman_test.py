@@ -60,8 +60,46 @@ class TestRepository(unittest.TestCase):
     photoman.Repository()._tree_setup('/tmp/foo')
     self.assertEquals(2, mkdir.call_count)
 
+  def _execute_tester(self, method):
+    rep = photoman.Repository()
+    rep.con = MagicMock()
+    rep.con.cursor.return_value.execute.return_value = [1, 4]
+    self.assertEquals(rep.con.cursor.return_value, method(rep))
+    self.assertTrue(rep.con.cursor.return_value.execute.called)
+
+  def test_iter_all_photos(self):
+    rep = photoman.Repository()
+    rep.con = MagicMock()
+    rep.con.cursor.return_value.execute.return_value = [1, 4]
+    self.assertEquals(rep.con.cursor.return_value, rep.iter_all_photos())
+    self.assertTrue(rep.con.cursor.return_value.execute.called)
+
+  def test_remove_photos(self):
+    rep = photoman.Repository()
+    rep.con = MagicMock()
+    execute = rep.con.cursor.return_value.execute
+    rep.remove_photos([1, 4])
+    execute.assert_called_with(ANY, [1, 4])
+
+  def test_remove(self):
+    rep = photoman.Repository()
+    rep.con = MagicMock()
+    execute = rep.con.cursor.return_value.execute
+    photo = MagicMock()
+    photo.md5 = 42
+    rep.remove(photo)
+    execute.assert_called_with(ANY, [42])
+
+  def test_close(self):
+    rep = photoman.Repository()
+    connection = MagicMock()
+    rep.con = connection
+    rep.close()
+    self.assertEquals(None, rep.con, 'expect connection removed')
+    self.assertEquals(call.commit(), connection.mock_calls[0])
+    self.assertEquals(call.close(), connection.mock_calls[1])
   
-  def test_add(self):
+  def test_add_or_update(self):
     rep = photoman.Repository()
     photo = Mock()
     rep.con = Mock()
@@ -155,48 +193,115 @@ class TestPhoto(unittest.TestCase):
 class PhotoManFunctionalTests(unittest.TestCase):
 
   def testNewDatabase(self):
+    (srcdir, mediadir, tmpdir) = self._setup_test_data()
     try:
-      (srcdir, mediadir, tmpdir) = self._setup_test_data()
       photoman._find_and_archive_photos(srcdir, mediadir, False)
-      print 'testNewDatabase Result'
-      self._print_tree(tmpdir)
+      files = [
+          os.path.join(tmpdir, 'dest/media/media.db'),
+          os.path.join(tmpdir,
+                       'dest/media/photos/2012/07_July/gnexus 160.jpg'),
+          os.path.join(tmpdir,
+                       'dest/media/photos/2002/10_October/105-0555_IMG.JPG'),
+          os.path.join(tmpdir,
+                       'dest/media/photos/2003/03_March/594-9436_IMG.JPG'),
+          os.path.join(tmpdir,
+                       'dest/media/photos/2006/03_March/IMG_1427.JPG'),
+          os.path.join(tmpdir,
+                       'dest/media/photos/2006/06_June/DSC09012.JPG'),
+          os.path.join(tmpdir, 'src/DSC09012.JPG'),
+          os.path.join(tmpdir, 'src/IMG_1427.JPG'),
+          os.path.join(tmpdir, 'src/594-9436_IMG.JPG'),
+          os.path.join(tmpdir, 'src/105-0555_IMG.JPG'),
+          os.path.join(tmpdir, 'src/gnexus 160.jpg')]
+      for filepath in files:
+        self.assertTrue(os.path.isfile(filepath))
     finally:
       shutil.rmtree(tmpdir)
 
   def testNewDatabaseDeleteSource(self):
+    (srcdir, mediadir, tmpdir) = self._setup_test_data()
     try:
-      (srcdir, mediadir, tmpdir) = self._setup_test_data()
       photoman._find_and_archive_photos(srcdir, mediadir, True)
-      print 'testNewDatabaseDeleteSource Result'
-      self._print_tree(tmpdir)
+      files = [
+          os.path.join(tmpdir, 'src/DSC09012.JPG'),
+          os.path.join(tmpdir, 'src/IMG_1427.JPG'),
+          os.path.join(tmpdir, 'src/594-9436_IMG.JPG'),
+          os.path.join(tmpdir, 'src/105-0555_IMG.JPG'),
+          os.path.join(tmpdir, 'src/gnexus 160.jpg')]
+      for filepath in files:
+        self.assertFalse(os.path.isfile(filepath))
     finally:
       shutil.rmtree(tmpdir)
 
   def testDuplicateFiles(self):
+    (srcdir, mediadir, tmpdir) = self._setup_test_data()
     try:
-      (srcdir, mediadir, tmpdir) = self._setup_test_data()
       photoman._find_and_archive_photos(srcdir, mediadir, True)
       self._copy_test_images(srcdir, 'dup_')
       photoman._find_and_archive_photos(srcdir, mediadir, False)
-      print 'testDuplicatefiles Result'
-      self._print_tree(tmpdir)
+      #print 'testDuplicatefiles Result'
+      #self._print_tree(tmpdir)
     finally:
       shutil.rmtree(tmpdir)
 
-  def testQueryHash(self):
+  def test_query_all(self):
+    (srcdir, mediadir, tmpdir) = self._setup_test_data()
     try:
-      (srcdir, mediadir, tmpdir) = self._setup_test_data()
       photoman._find_and_archive_photos(srcdir, mediadir, True)
       rep = photoman.Repository()
       rep.open(mediadir)
       cur = rep.con.cursor()
-      rows = cur.execute('''
-        SELECT md5, source_path FROM photos WHERE id = 1''')
-      row = rows.fetchone()
-      print 'Row =', row
-      self.assertNotEquals(None, row)
+      cur.execute('''
+        select id, archive_path FROM photos''')
+      rows = 0
+      for row in cur:
+        rows += 1
+      self.assertEquals(5, rows)
+      cur = rep.con.cursor()
+      ids = [1, 5]
+      cur.execute(' DELETE from photos where id in (' +
+                  ','.join('?'*len(ids)) + ')', ids)
+      cur.execute('''
+        select id, archive_path FROM photos''')
+      rows = 0
+      for row in cur:
+        rows += 1
+      self.assertEquals(3, rows)
     finally:
       shutil.rmtree(tmpdir)
+
+  def test_scan_missing(self):
+    (srcdir, mediadir, tmpdir) = self._setup_test_data()
+    try:
+      rows = 0
+      photoman._find_and_archive_photos(srcdir, mediadir, True)
+      rep = photoman.Repository()
+      rep.open(os.path.join(mediadir))
+      rows = self._get_row_count(rep)
+      rep.close()
+      os.remove(os.path.join(mediadir,
+                             'photos/2012/07_July/gnexus 160.jpg'))
+      photoman._scan_missing_photos(mediadir)
+      rep = photoman.Repository()
+      rep.open(os.path.join(mediadir))
+      self.assertEquals(rows - 1, self._get_row_count(rep))
+      cur = rep.con.cursor()
+      filepath = os.path.join(mediadir,
+                          'photos/2012/07_July/gnexus 160.jpg')
+      rows = cur.execute('''
+        select id FROM photos WHERE archive_path = ?''', [filepath])
+      self.assertEquals(None, rows.fetchone())
+      rep.close()
+    finally:
+      shutil.rmtree(tmpdir)
+
+  def _get_row_count(self, repository):
+    cur = repository.con.cursor()
+    cur.execute(''' select id, archive_path FROM photos''')
+    rows = 0
+    for row in cur:
+      rows += 1
+    return rows
 
   def _setup_test_data(self):
     tmpdir = tempfile.mkdtemp()
@@ -214,9 +319,8 @@ class PhotoManFunctionalTests(unittest.TestCase):
     test_files = glob.glob(os.path.join(test_data_dir, '*.jpg'))
     test_files += glob.glob(os.path.join(test_data_dir, '*.JPG'))
     for test_file in test_files:
-      shutil.copy(test_file,
-                  os.path.join(srcdir,
-                               prefix + os.path.basename(test_file)))
+      dup_file = os.path.join(srcdir, prefix + os.path.basename(test_file))
+      shutil.copy(test_file, dup_file)
     
   def _print_tree(self, basedir):
     print basedir + '/'

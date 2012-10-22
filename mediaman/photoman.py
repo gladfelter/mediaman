@@ -21,6 +21,8 @@ gflags.DEFINE_string('src_dir', None, 'Directory to scan for photos')
 gflags.DEFINE_string('media_dir', None, 'Directory of media library')
 gflags.DEFINE_boolean('del_src', False, 'Delete the source image if' +
                       ' succesfully archived')
+gflags.DEFINE_boolean('scan_missing', False, 'Scan for deleted files in' +
+                      ' the archive and remove them from the database')
 
 gflags.MarkFlagAsRequired('src_dir')
 gflags.MarkFlagAsRequired('media_dir')
@@ -28,6 +30,7 @@ gflags.MarkFlagAsRequired('media_dir')
 FLAGS = gflags.FLAGS
 
 class Repository():
+
   """Represents a repository of media items, such as photos"""
 
   def __init__(self):
@@ -50,7 +53,7 @@ class Repository():
         size integer,
         description text,
         source_info text,
-        source_path text,
+        archive_path text,
         timestamp integer,
         camera_make text,
         camera_model text,
@@ -64,7 +67,9 @@ class Repository():
 
   def close(self):
     """Closes the repository."""
+    self.con.commit()
     self.con.close()
+    self.con = None
   
   def add_or_update(self, photo):
     """Adds a photo to the repository."""
@@ -72,17 +77,17 @@ class Repository():
     cur.execute('''
 INSERT OR REPLACE INTO photos (id, flags, md5, size, description,
                                source_info, camera_make,
-                               camera_model, source_path,
+                               camera_model, archive_path,
                                timestamp)
 SELECT old.id, old.flags, new.md5, new.size, old.description,
        old.source_info, new.camera_make, new.camera_model,
-       new.source_path, new.timestamp
+       new.archive_path, new.timestamp
 FROM ( SELECT
      :md5             AS md5,
      :size            AS size,
      :camera_make     AS camera_make,
      :camera_model    AS camera_model,
-     :source_path     AS source_path,
+     :archive_path     AS archive_path,
      :timestamp       AS timestamp
  ) AS new
 LEFT JOIN (
@@ -106,13 +111,26 @@ LEFT JOIN (
     cur = self.con.cursor()
     logging.info('looking for hash %s', md5)
     rows = cur.execute('''
-        SELECT id, source_path FROM photos WHERE md5 = :md5 ''', locals())
+        SELECT id, archive_path FROM photos WHERE md5 = :md5 ''', locals())
     row = rows.fetchone()
     if row != None:
       logging.debug('Fond row object %s', row)
       return row
 
     return None
+
+  def iter_all_photos(self):
+    """Returns an iterator returning (id, filepath) for all photos"""
+    cur = self.con.cursor()
+    cur.execute('''
+      select id, archive_path FROM photos''')
+    return cur
+
+  def remove_photos(self, photo_ids):
+    cur = self.con.cursor()
+    query = (' DELETE from photos where id in (' +
+            ','.join('?'*len(photo_ids)) + ')')
+    cur.execute(query, photo_ids)
 
   @staticmethod
   def _tree_setup(lib_base_dir):
@@ -128,7 +146,7 @@ class Photo():
   def __init__(self, source_path):
     self.db_id = self.flags = self.md5 = None
     self.size = self.description = None
-    self.timestamp = self.dest_path = None
+    self.timestamp = self.archive_path = None
     self.camera_make = self.camera_model = None
     self.source_info = None
     self.source_path = source_path
@@ -279,12 +297,12 @@ def _archive_photo(photo,
   """
   _copy_photo(photo, lib_base_dir)
   photo.db_id = repository.add_or_update(photo)
-  if photo.db_id > 0 and os.path.isfile(photo.dest_path):
-    dest_photo = Photo(photo.dest_path)
+  if photo.db_id > 0 and os.path.isfile(photo.archive_path):
+    dest_photo = Photo(photo.archive_path)
     dest_photo.load_metadata()
     if dest_photo.md5 is not None and dest_photo.md5 == photo.md5:
       logging.info('%s was successfully copied to destination %s', 
-                   photo.source_path, photo.dest_path)
+                   photo.source_path, photo.archive_path)
       if delete_source_on_success:
         logging.info('deleting the source file %s.',
                      photo.source_path)
@@ -292,12 +310,12 @@ def _archive_photo(photo,
     else:
       logging.warning('Destination photo file %s didn''t match ' +
                       'the hash of or wasn''t properly transferred ' +
-                      'from %s', photo.dest_path, photo.source_path)
+                      'from %s', photo.archive_path, photo.source_path)
   else:
     logging.warning('%s was not copied to %s or it failed to be ' +
                     'inserted into the database, skipping deletion ' +
                     'of the original',
-                    photo.source_path, photo.dest_path)
+                    photo.source_path, photo.archive_path)
 
 
 def _copy_photo(photo, lib_base_dir):
@@ -306,13 +324,13 @@ def _copy_photo(photo, lib_base_dir):
   parts = photo.get_path_parts()
   relative_path = "%04d/%s/%s" % (parts[0], _get_month_name(parts[1]),
                                   parts[2])
-  dest_path = os.path.join(lib_base_dir, 'photos', relative_path)
-  photo.dest_path = dest_path
-  dest_dir = os.path.dirname(photo.dest_path)
+  archive_path = os.path.join(lib_base_dir, 'photos', relative_path)
+  photo.archive_path = archive_path
+  dest_dir = os.path.dirname(photo.archive_path)
   if not os.path.exists(dest_dir):
     os.makedirs(dest_dir)
-  if photo.source_path != photo.dest_path:
-    shutil.copy(photo.source_path, photo.dest_path)
+  if photo.source_path != photo.archive_path:
+    shutil.copy(photo.source_path, photo.archive_path)
 
 
 def _get_month_name(month):
@@ -320,11 +338,36 @@ def _get_month_name(month):
   return "%02d_%s" % (month, calendar.month_name[month])
 
 
-def _remove_nonexistent_photos(lib_base_dir):
+def _scan_missing_photos(lib_base_dir):
+  """Removes photos from the repository that don't exist in the archive"""
   rep = Repository()
-  rep.open(lib_base_dir)
-  # TODO(david): Search the photos dir and remove missing photos from db
+  try:
+    rep.open(lib_base_dir)
+    missing_files = []
+    for (db_id, filepath) in rep.iter_all_photos():
+      if not os.path.isfile(filepath):
+        logging.warning('The photo %s was deleted from the ' +
+                        'archive unexpectedly. It will be removed from ' +
+                        'the database.', filepath)
+        missing_files.append(db_id)
+    rep.remove_photos(missing_files)
+  finally:
+    rep.close()
 
+
+def _recursive_iter(current_dir, operation):
+  """Perform an operation on all the files in the current and sub-folders.
+  """ 
+  results = []
+  current_dir = os.path.abspath(current_dir)
+  elements = os.listdir(current_dir)
+  for element in elements:
+    abs_path = os.path.join(current_dir, element)
+    if os.path.isfile(curFile):
+      results.append(operation(curFile))
+    else:
+      results += _recursive_iter(current_dir, operation)
+  return results
 
 def _configure_logging():
   """Configures logging to stderr, file."""
@@ -349,6 +392,9 @@ def _main(argv):
     sys.exit(1)
   _configure_logging()
   _find_and_archive_photos(FLAGS.src_dir, FLAGS.media_dir, FLAGS.del_src)
+  if FLAGS.scan_missing:
+    _scan_missing_photos(FLAGS.media_dir)
+
 
 if __name__ == '__main__':
   _main(sys.argv)
