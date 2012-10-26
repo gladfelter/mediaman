@@ -251,6 +251,7 @@ def _find_and_archive_photos(search_dir,
   rep = Repository()
   rep.open(lib_base_dir)
   photos = os.listdir(search_dir)
+  files_to_delete = []
   logging.info('Found these photo files: %s', photos)
   for path in photos:
     path = os.path.join(search_dir, path)
@@ -276,20 +277,27 @@ def _find_and_archive_photos(search_dir,
         # file was deleted from archive, remove it from repository
         logging.info('Photo %s was deleted from the archive, replacing' +
                      ' it with the new one.', db_result[1])
-        _archive_photo(photo, lib_base_dir, rep, delete_source_on_success)
+        if (_archive_photo(photo, lib_base_dir, rep) and
+            delete_source_on_success):
+          files_to_delete.append(photo.source_path)
       else:
-        _archive_photo(photo, lib_base_dir, rep, delete_source_on_success)
+        if (_archive_photo(photo, lib_base_dir, rep) and
+            delete_source_on_success):
+          files_to_delete.append(photo.source_path)
     else:
       logging.warning('Found a non-file when looking for photos: %s, ' +
                       'it will not be modified', path)
 
   rep.close()
+  for filepath in files_to_delete:
+    os.remove(filepath)
+  logging.info('Successfully completed archiving %d files', len(photos))
+
 
 
 def _archive_photo(photo,
                    lib_base_dir,
-                   repository,
-                   delete_source_on_success):
+                   repository):
   """Copies the photo to the archive and adds it to the repository.
 
   The source file will be deleted if it was successfully archived
@@ -303,19 +311,18 @@ def _archive_photo(photo,
     if dest_photo.md5 is not None and dest_photo.md5 == photo.md5:
       logging.info('%s was successfully copied to destination %s', 
                    photo.source_path, photo.archive_path)
-      if delete_source_on_success:
-        logging.info('deleting the source file %s.',
-                     photo.source_path)
-        os.remove(photo.source_path)
+      return True
     else:
       logging.warning('Destination photo file %s didn''t match ' +
                       'the hash of or wasn''t properly transferred ' +
                       'from %s', photo.archive_path, photo.source_path)
+      return False
   else:
     logging.warning('%s was not copied to %s or it failed to be ' +
                     'inserted into the database, skipping deletion ' +
                     'of the original',
                     photo.source_path, photo.archive_path)
+    return False
 
 
 def _copy_photo(photo, lib_base_dir):
@@ -330,7 +337,7 @@ def _copy_photo(photo, lib_base_dir):
   if not os.path.exists(dest_dir):
     os.makedirs(dest_dir)
   if photo.source_path != photo.archive_path:
-    shutil.copy(photo.source_path, photo.archive_path)
+    shutil.copy2(photo.source_path, photo.archive_path)
 
 
 def _get_month_name(month):
@@ -390,10 +397,13 @@ def _main(argv):
   except gflags.FlagsError, error:
     print '%s\nUsage: %s ARGS\n%s' % (error, sys.argv[0], FLAGS)
     sys.exit(1)
-  _configure_logging()
-  _find_and_archive_photos(FLAGS.src_dir, FLAGS.media_dir, FLAGS.del_src)
-  if FLAGS.scan_missing:
-    _scan_missing_photos(FLAGS.media_dir)
+  try:
+    _configure_logging()
+    _find_and_archive_photos(FLAGS.src_dir, FLAGS.media_dir, FLAGS.del_src)
+    if FLAGS.scan_missing:
+      _scan_missing_photos(FLAGS.media_dir)
+  except:
+    logging.exception('An unexpected error occurred during photo archiving')
 
 
 if __name__ == '__main__':

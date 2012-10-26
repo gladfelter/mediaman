@@ -267,6 +267,7 @@ class PhotoManFunctionalTests(unittest.TestCase):
       for row in cur:
         rows += 1
       self.assertEquals(3, rows)
+      rep.close()
     finally:
       shutil.rmtree(tmpdir)
 
