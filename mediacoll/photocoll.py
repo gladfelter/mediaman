@@ -59,12 +59,14 @@ class CollectionStatus():
       
   def get_last_collection(self):
     if self.LAST_COLLECTION in self.status:
-      return self.status.get(self.src_dir, 0)
+      return self.status[self.LAST_COLLECTION].get(self.src_dir, 0)
     else:
       return 0
 
   def set_last_collection(self, time):
-    self.status.get(self.LAST_COLLECTION, dict())[self.src_dir] = time
+    collections = self.status.get(self.LAST_COLLECTION, dict())
+    collections[self.src_dir] = time
+    self.status[self.LAST_COLLECTION] = collections
 
   def save(self, path):
     pickle.dump(self.status, open(path, 'w'))

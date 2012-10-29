@@ -27,8 +27,8 @@ class PhotoCollectionTests(unittest.TestCase):
                                   stat, exists):
     configure_status_dir.return_value = 'c:\\foo'
     exists.return_value = True
-    status = photocoll.read_collection_status()
-    stat.assert_called_with('c:\\foo\\status.txt') 
+    status = photocoll.read_collection_status('c:\\photos')
+    stat.assert_called_with('c:\\foo\\status.txt', 'c:\\photos') 
 
 
   @patch('os.path.exists')
@@ -38,8 +38,8 @@ class PhotoCollectionTests(unittest.TestCase):
                                           stat, exists):
     configure_status_dir.return_value = '\\foo'
     exists.return_value = False
-    status = photocoll.read_collection_status()
-    stat.assert_called_with(None) 
+    status = photocoll.read_collection_status('c:\\photos')
+    stat.assert_called_with(None, 'c:\\photos') 
 
   @patch('photocoll.configure_status_dir')
   def test_write_collection_status(self, configure_status_dir):
@@ -89,22 +89,22 @@ class CollectionStatusTests(unittest.TestCase):
   @patch('__builtin__.open')
   def test_save(self, open_fn, dump):
     open_fn.return_value = 1
-    status = photocoll.CollectionStatus(None)
+    status = photocoll.CollectionStatus(None, 'c:\\photos')
     status.status['bar'] = 'baz'
     status.save('foo')
     open_fn.assert_called_with('foo', 'w')
     dump.assert_called_with({ 'bar' : 'baz' }, open_fn.return_value)
 
   def test_get_last_collection(self):
-    status = photocoll.CollectionStatus(None)
-    status.status[photocoll.CollectionStatus.LAST_COLLECTION] = 42
+    status = photocoll.CollectionStatus(None, 'c:\\photos')
+    status.status[photocoll.CollectionStatus.LAST_COLLECTION] = { 
+        'c:\\photos' : 42 }
     self.assertEqual(42, status.get_last_collection())
 
   def test_set_last_collection(self):
-    status = photocoll.CollectionStatus(None)
+    status = photocoll.CollectionStatus(None, 'c:\\photos')
     status.set_last_collection(42)
-    status.status[photocoll.CollectionStatus.LAST_COLLECTION] = 42
-    self.assertEqual(42,
+    self.assertEqual({ 'c:\\photos' : 42 },
                      status.status[photocoll.CollectionStatus.LAST_COLLECTION])
 
   @patch('pickle.load')
@@ -112,7 +112,7 @@ class CollectionStatusTests(unittest.TestCase):
   def test_init(self, open_fn, load):
     open_fn.return_value = 1
     load.return_value = { photocoll.CollectionStatus.LAST_COLLECTION : 42 }
-    status = photocoll.CollectionStatus('foo')
+    status = photocoll.CollectionStatus('foo', 'c:\\photos')
     self.assertEquals(42, status.status[status.LAST_COLLECTION])
     
 
