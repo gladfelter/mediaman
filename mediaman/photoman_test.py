@@ -29,12 +29,12 @@ class TestRepository(unittest.TestCase):
     conn_mock.cursor.return_value = cur_mock()
     connect.return_value = conn_mock
     self.rep.open('/tmp/bar')
-    access.assert_called_with('/tmp/bar', ANY)
+    access.assert_called_with('/tmp/bar/media.db', ANY)
     connect.assert_called_with('/tmp/bar/media.db')
     self.assertFalse(conn_mock.cursor.called,
                     'expect cursor not needed for existing database')
-    self.assertFalse(tree_setup.called,
-                     'expect tree_setup not needed for existing database')
+    self.assertTrue(tree_setup.called,
+                     'expect tree_setup always called')
 
   @patch('sqlite3.dbapi2.connect')
   @patch('os.access')
@@ -46,14 +46,14 @@ class TestRepository(unittest.TestCase):
     conn_mock.cursor.return_value = cur_mock
     connect.return_value = conn_mock
     self.rep.open('/tmp/bar')
-    access.assert_called_with('/tmp/bar', ANY)
+    access.assert_called_with('/tmp/bar/media.db', ANY)
     connect.assert_called_with('/tmp/bar/media.db')
     self.assertTrue(conn_mock.cursor.called,
                     'expect cursor needed for new database')
     self.assertTrue(cur_mock.execute.called,
                     'expect insert table called for new database')
     self.assertTrue(tree_setup.called,
-                     'expect tree_setup needed for new database')
+                     'expect tree_setup always called')
 
   @patch('os.mkdir')
   def test_tree_setup(self, mkdir):

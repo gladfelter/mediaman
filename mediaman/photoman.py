@@ -38,13 +38,14 @@ class Repository():
 
   def open(self, lib_base_dir):  # opens, returns biggest ID or -1 on error
     """Opens or creates the repository and media library"""
+    self._tree_setup(lib_base_dir)
     # create data store if it doesn't exist
-    if not os.access(lib_base_dir, os.R_OK|os.W_OK|os.X_OK):
+    db_path = os.path.join(lib_base_dir, 'media.db')
+    if not os.access(db_path, os.R_OK|os.W_OK):
       logging.warning("can't open %s, will attempt to create it", 
                       lib_base_dir)
-      self._tree_setup(lib_base_dir)
       # initialize the database
-      self.con = sqlite.connect(lib_base_dir + "/media.db")
+      self.con = sqlite.connect(os.path.join(lib_base_dir, "media.db"))
       cur = self.con.cursor()
       cur.execute('''create table photos
         (id integer primary key,
@@ -60,7 +61,7 @@ class Repository():
         unique (md5) on conflict replace);
         ''')
     else:  
-      self.con = sqlite.connect(lib_base_dir + "/media.db")
+      self.con = sqlite.connect(os.path.join(lib_base_dir, "media.db"))
     if self.con <= 0:
       raise RuntimeError("Could not open the media database" +
                          "for an unknown reason")
@@ -135,8 +136,11 @@ LEFT JOIN (
   @staticmethod
   def _tree_setup(lib_base_dir):
     """Creates the media library directories"""
-    os.mkdir(lib_base_dir, 0755)
-    os.mkdir(lib_base_dir + '/photos', 0755)
+    if not os.path.exists(lib_base_dir):
+      os.mkdir(lib_base_dir, 0755)
+    photos_dir = os.path.join(lib_base_dir, 'photos')
+    if not os.path.exists(photos_dir):
+      os.mkdir(photos_dir, 0755)
 
 
 class Photo():
@@ -329,8 +333,8 @@ def _copy_photo(photo, lib_base_dir):
   """Copies a photo file to its destination, computing the destination
   from the file's metadata"""
   parts = photo.get_path_parts()
-  relative_path = "%04d/%s/%s" % (parts[0], _get_month_name(parts[1]),
-                                  parts[2])
+  relative_path = os.path.join('%04d' % parts[0], _get_month_name(parts[1]),
+                               parts[2])
   archive_path = os.path.join(lib_base_dir, 'photos', relative_path)
   photo.archive_path = archive_path
   dest_dir = os.path.dirname(photo.archive_path)
@@ -339,6 +343,19 @@ def _copy_photo(photo, lib_base_dir):
   if photo.source_path != photo.archive_path:
     shutil.copy2(photo.source_path, photo.archive_path)
 
+
+def copy_file(filepath, dest_dir):
+  dirname, filename = os.path.split(filepath)
+  prefix, suffix = os.path.splitext(filename)
+  counter = 1
+  destpath = os.path.join(dest_dir, filename)
+  while os.path.exists(destpath): 
+    destpath = os.path.join(dest_dir, prefix + '_' + str(counter) + suffix)
+    counter += 1
+  if counter != 1:
+    logging.info('file %s had to be renamed to %s to avoid a conflict.',
+                 filepath, destpath)
+  shutil.copy2(filepath, destpath)
 
 def _get_month_name(month):
   """Returns a month identifier for a given decimal month"""
