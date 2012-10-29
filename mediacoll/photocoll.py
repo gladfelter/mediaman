@@ -47,8 +47,9 @@ class CollectionStatus():
   
   LAST_COLLECTION = 'last_collection'
 
-  def __init__(self, path):
+  def __init__(self, path, src_dir):
     self.status = dict()
+    self.src_dir = os.path.realpath(src_dir)
     if path is not None:
       try:
         self.status = pickle.load(open(path, 'r'))
@@ -57,10 +58,13 @@ class CollectionStatus():
                           ' collection status, continuing')
       
   def get_last_collection(self):
-    return self.status.get(self.LAST_COLLECTION, 0)
+    if self.LAST_COLLECTION in self.status:
+      return self.status.get(self.src_dir, 0)
+    else:
+      return 0
 
   def set_last_collection(self, time):
-    self.status[self.LAST_COLLECTION] = time
+    self.status.get(self.LAST_COLLECTION, dict())[self.src_dir] = time
 
   def save(self, path):
     pickle.dump(self.status, open(path, 'w'))
@@ -98,13 +102,13 @@ def configure_status_dir():
   return status_dir
 
 
-def read_collection_status():
+def read_collection_status(src_dir):
   status_file = os.path.join(configure_status_dir(), u'status.txt')
   
   if os.path.exists(status_file):
-    return CollectionStatus(status_file)
+    return CollectionStatus(status_file, src_dir)
   else:
-    return CollectionStatus(None)
+    return CollectionStatus(None, src_dir)
 
 
 def write_collection_status(status):
@@ -151,7 +155,7 @@ def collect_photos(src_dir, staging_dir, ignore_extensions):
   status = None
   start_time = time.time()
   try:
-    status = read_collection_status()
+    status = read_collection_status(src_dir)
     last_coll = status.get_last_collection()
     logging.info('Starting photo collection: src_dir = %s, ' + 
                  'staging_dir = %s, last_collection = %s',
