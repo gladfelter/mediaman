@@ -341,10 +341,12 @@ def _copy_photo(photo, lib_base_dir):
   if not os.path.exists(dest_dir):
     os.makedirs(dest_dir)
   if photo.source_path != photo.archive_path:
-    shutil.copy2(photo.source_path, photo.archive_path)
+    photo.archive_path = _copy_file(photo.source_path, dest_dir)
 
 
-def copy_file(filepath, dest_dir):
+def _copy_file(filepath, dest_dir):
+  """Copies a file, keeping its metadata and renaming it if there's a
+  conflict."""
   dirname, filename = os.path.split(filepath)
   prefix, suffix = os.path.splitext(filename)
   counter = 1
@@ -356,6 +358,8 @@ def copy_file(filepath, dest_dir):
     logging.info('file %s had to be renamed to %s to avoid a conflict.',
                  filepath, destpath)
   shutil.copy2(filepath, destpath)
+  return destpath
+
 
 def _get_month_name(month):
   """Returns a month identifier for a given decimal month"""

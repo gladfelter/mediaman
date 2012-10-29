@@ -2,6 +2,7 @@
 
 import datetime
 import glob
+import logging
 import os
 import photoman
 import pyexiv2
@@ -192,6 +193,11 @@ class TestPhoto(unittest.TestCase):
 
 class PhotoManFunctionalTests(unittest.TestCase):
 
+  def setUp(self):
+    root = logging.getLogger('')
+    # prevent log messages from cluttering unit test output
+    root.setLevel(logging.CRITICAL)
+
   def testNewDatabase(self):
     (srcdir, mediadir, tmpdir) = self._setup_test_data()
     try:
@@ -334,6 +340,13 @@ class PhotoManFunctionalTests(unittest.TestCase):
         dirs.append(full_path)
     for dirname in dirs:
       self._print_tree(dirname)
+
+  @patch('shutil.copy2')
+  @patch('os.path.exists')
+  def test_copy_file(self, exists, copy2):
+    exists.side_effect = [True, False]
+    photoman._copy_file('/tmp/foo.txt', '/tmp/blah')
+    copy2.assert_called_with('/tmp/foo.txt', '/tmp/blah/foo_1.txt')
       
 
 if __name__ == '__main__':
