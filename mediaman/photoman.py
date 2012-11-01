@@ -218,8 +218,9 @@ class Photo():
           time_struct = metadata[key].value.timetuple()
           self.timestamp = time.mktime(time_struct)
           break
-        except ValueError:
-          pass
+        except (ValueError, AttributeError):
+          logging.warning('There was a problem reading the exif '
+                          + 'timestamp for %s.', self.source_path)
 
   def _load_filesystem_timestamp(self):
     """Gets the last modified timestamp for the photo."""
