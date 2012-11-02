@@ -7,6 +7,7 @@ metadata about the photos. Detects duplicates and ignores them.
 """
 import calendar
 import gflags
+import grp
 import hashlib
 import logging
 import os
@@ -23,6 +24,8 @@ gflags.DEFINE_boolean('del_src', False, 'Delete the source image if' +
                       ' succesfully archived')
 gflags.DEFINE_boolean('scan_missing', False, 'Scan for deleted files in' +
                       ' the archive and remove them from the database')
+gflags.DEFINE_string('group_name', '', 'The name of the group to use' +
+                      ' for the destionation file')
 
 gflags.MarkFlagAsRequired('src_dir')
 gflags.MarkFlagAsRequired('media_dir')
@@ -244,18 +247,31 @@ class Photo():
     return (metadata.hexdigest())
 
 
+def _get_group_id(group_name):
+  """ Returns the group id for the given group name """
+  if group_name is not None:
+    return grp.getgrnam(group_name)[2]
+  else:
+    # means 'don't change group'
+    return -1
+
+
 def _find_and_archive_photos(search_dir,
                              lib_base_dir,
-                             delete_source_on_success):
+                             delete_source_on_success,
+                             group_name):
   """Sets up or opens a media library and adds new photos
   to the library and its database.
   
   The source image files will be deleted if --del_src is
   specified.
   """
+  
+
   rep = Repository()
   rep.open(lib_base_dir)
   photos = os.listdir(search_dir)
+  group_id = _get_group_id(group_name)
   files_to_delete = []
   logging.info('Found these photo files: %s', photos)
   for path in photos:
@@ -282,11 +298,11 @@ def _find_and_archive_photos(search_dir,
         # file was deleted from archive, remove it from repository
         logging.info('Photo %s was deleted from the archive, replacing' +
                      ' it with the new one.', db_result[1])
-        if (_archive_photo(photo, lib_base_dir, rep) and
+        if (_archive_photo(photo, lib_base_dir, rep, group_id) and
             delete_source_on_success):
           files_to_delete.append(photo.source_path)
       else:
-        if (_archive_photo(photo, lib_base_dir, rep) and
+        if (_archive_photo(photo, lib_base_dir, rep, group_id) and
             delete_source_on_success):
           files_to_delete.append(photo.source_path)
     else:
@@ -302,13 +318,14 @@ def _find_and_archive_photos(search_dir,
 
 def _archive_photo(photo,
                    lib_base_dir,
-                   repository):
+                   repository,
+                   group_id):
   """Copies the photo to the archive and adds it to the repository.
 
   The source file will be deleted if it was successfully archived
   and the --del_src flag is specified.
   """
-  _copy_photo(photo, lib_base_dir)
+  _copy_photo(photo, lib_base_dir, group_id)
   photo.db_id = repository.add_or_update(photo)
   if photo.db_id > 0 and os.path.isfile(photo.archive_path):
     dest_photo = Photo(photo.archive_path)
@@ -330,7 +347,7 @@ def _archive_photo(photo,
     return False
 
 
-def _copy_photo(photo, lib_base_dir):
+def _copy_photo(photo, lib_base_dir, group_id):
   """Copies a photo file to its destination, computing the destination
   from the file's metadata"""
   parts = photo.get_path_parts()
@@ -343,6 +360,7 @@ def _copy_photo(photo, lib_base_dir):
     os.makedirs(dest_dir)
   if photo.source_path != photo.archive_path:
     photo.archive_path = _copy_file(photo.source_path, dest_dir)
+    os.chown(photo.archive_path, -1, group_id)
 
 
 def _copy_file(filepath, dest_dir):
@@ -421,7 +439,8 @@ def _main(argv):
     sys.exit(1)
   try:
     _configure_logging()
-    _find_and_archive_photos(FLAGS.src_dir, FLAGS.media_dir, FLAGS.del_src)
+    _find_and_archive_photos(FLAGS.src_dir, FLAGS.media_dir,
+                             FLAGS.del_src, FLAGS.group_name)
     if FLAGS.scan_missing:
       _scan_missing_photos(FLAGS.media_dir)
   except:

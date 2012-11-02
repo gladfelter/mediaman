@@ -191,6 +191,15 @@ class TestPhoto(unittest.TestCase):
     self.photo._load_camera_model(m, image_keys)
     self.assertEquals('Bar', self.photo.camera_model)
 
+class TestUtilityFunctions(unittest.TestCase):
+
+  @patch('grp.getgrnam')
+  def test_get_group_id(self, getgrnam):
+    getgrnam.return_value = [None, None, 42]
+    self.assertEquals(42, photoman._get_group_id('foo'))
+    self.assertEquals(-1, photoman._get_group_id(None))
+
+
 class PhotoManFunctionalTests(unittest.TestCase):
 
   def setUp(self):
@@ -198,16 +207,18 @@ class PhotoManFunctionalTests(unittest.TestCase):
     # prevent log messages from cluttering unit test output
     root.setLevel(logging.CRITICAL)
 
+  @patch('grp.getgrnam', new=lambda x: [None, None, -1])
+  @patch('os.chown', new=lambda x, y, z : None)
   def testNewDatabase(self):
     (srcdir, mediadir, tmpdir) = self._setup_test_data()
     try:
-      photoman._find_and_archive_photos(srcdir, mediadir, False)
+      photoman._find_and_archive_photos(srcdir, mediadir, False, 'foo')
       files = [
           os.path.join(tmpdir, 'dest/media/media.db'),
           os.path.join(tmpdir,
                        'dest/media/photos/2012/07_July/gnexus 160.jpg'),
-          os.path.join(tmpdir,
-                       'dest/media/photos/2002/10_October/105-0555_IMG.JPG'),
+          os.path.join(tmpdir, 'dest/media/photos/2002/'
+                       + '10_October/105-0555_IMG.JPG'),
           os.path.join(tmpdir,
                        'dest/media/photos/2003/03_March/594-9436_IMG.JPG'),
           os.path.join(tmpdir,
@@ -224,10 +235,12 @@ class PhotoManFunctionalTests(unittest.TestCase):
     finally:
       shutil.rmtree(tmpdir)
 
+  @patch('grp.getgrnam', new=lambda x: [None, None, -1])
+  @patch('os.chown', new=lambda x, y, z : None)
   def testNewDatabaseDeleteSource(self):
     (srcdir, mediadir, tmpdir) = self._setup_test_data()
     try:
-      photoman._find_and_archive_photos(srcdir, mediadir, True)
+      photoman._find_and_archive_photos(srcdir, mediadir, True, 'foo')
       files = [
           os.path.join(tmpdir, 'src/DSC09012.JPG'),
           os.path.join(tmpdir, 'src/IMG_1427.JPG'),
@@ -239,21 +252,25 @@ class PhotoManFunctionalTests(unittest.TestCase):
     finally:
       shutil.rmtree(tmpdir)
 
+  @patch('grp.getgrnam', new=lambda x: [None, None, -1])
+  @patch('os.chown', new=lambda x, y, z : None)
   def testDuplicateFiles(self):
     (srcdir, mediadir, tmpdir) = self._setup_test_data()
     try:
-      photoman._find_and_archive_photos(srcdir, mediadir, True)
+      photoman._find_and_archive_photos(srcdir, mediadir, True, 'foo')
       self._copy_test_images(srcdir, 'dup_')
-      photoman._find_and_archive_photos(srcdir, mediadir, False)
+      photoman._find_and_archive_photos(srcdir, mediadir, False, 'foo')
       #print 'testDuplicatefiles Result'
       #self._print_tree(tmpdir)
     finally:
       shutil.rmtree(tmpdir)
 
+  @patch('grp.getgrnam', new=lambda x: [None, None, -1])
+  @patch('os.chown', new=lambda x, y, z : None)
   def test_query_all(self):
     (srcdir, mediadir, tmpdir) = self._setup_test_data()
     try:
-      photoman._find_and_archive_photos(srcdir, mediadir, True)
+      photoman._find_and_archive_photos(srcdir, mediadir, True, 'foo')
       rep = photoman.Repository()
       rep.open(mediadir)
       cur = rep.con.cursor()
@@ -277,11 +294,13 @@ class PhotoManFunctionalTests(unittest.TestCase):
     finally:
       shutil.rmtree(tmpdir)
 
+  @patch('grp.getgrnam', new=lambda x: [None, None, -1])
+  @patch('os.chown', new=lambda x, y, z : None)
   def test_scan_missing(self):
     (srcdir, mediadir, tmpdir) = self._setup_test_data()
     try:
       rows = 0
-      photoman._find_and_archive_photos(srcdir, mediadir, True)
+      photoman._find_and_archive_photos(srcdir, mediadir, True, 'foo')
       rep = photoman.Repository()
       rep.open(os.path.join(mediadir))
       rows = self._get_row_count(rep)
