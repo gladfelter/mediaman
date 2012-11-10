@@ -270,49 +270,56 @@ def _find_and_archive_photos(search_dir,
 
   rep = Repository()
   rep.open(lib_base_dir)
-  photos = os.listdir(search_dir)
+  paths = os.walk(search_dir)
+  results = []
   group_id = _get_group_id(group_name)
   files_to_delete = []
-  logging.info('Found these photo files: %s', photos)
-  for path in photos:
-    path = os.path.join(search_dir, path)
-    if os.path.isfile(path):
-      photo = Photo(path)
-      photo.load_metadata()
-      db_result = rep.lookup_hash(photo.md5)
-      if (db_result is not None
-          and os.path.isfile(db_result[1])
-          and delete_source_on_success):
-        # file is a duplicate and the original is still around
-        logging.info('deleting the source file %s, which is a ' +
-                     'duplicate of existing file %s',
-                     photo.source_path, db_result[1])
-        os.remove(photo.source_path)
-      elif (db_result is not None
-            and os.path.isfile(db_result[1])):
-        # same as above, but client didn't request deletion
-        logging.info('ignoring the source file %s, which is a ' +
-                     'duplicate of existing file %s',
-                     photo.source_path, db_result[1])
-      elif db_result is not None:
-        # file was deleted from archive, remove it from repository
-        logging.info('Photo %s was deleted from the archive, replacing' +
-                     ' it with the new one.', db_result[1])
-        if (_archive_photo(photo, lib_base_dir, rep, group_id) and
-            delete_source_on_success):
-          files_to_delete.append(photo.source_path)
+  archive_count = 0
+  for (dirpath, dirnames, filenames) in paths:
+    for filename in filenames:
+      path = os.path.join(dirpath, filename)
+      if os.path.isfile(path):
+        photo = Photo(path)
+        photo.load_metadata()
+        db_result = rep.lookup_hash(photo.md5)
+        if (db_result is not None
+            and os.path.abspath(db_result[1]) == os.path.abspath(path)):
+          logging.info('Found existing archived photo %s, ignoring',
+                       db_result[1])
+        elif (db_result is not None
+            and os.path.isfile(db_result[1])
+            and delete_source_on_success):
+          # file is a duplicate and the original is still around
+          logging.info('Deleting the source file %s, which is a ' +
+                       'duplicate of existing file %s',
+                       photo.source_path, db_result[1])
+          os.remove(photo.source_path)
+        elif (db_result is not None
+              and os.path.isfile(db_result[1])):
+          # same as above, but client didn't request deletion
+          logging.info('Ignoring the source file %s, which is a ' +
+                       'duplicate of existing file %s',
+                       photo.source_path, db_result[1])
+        elif db_result is not None:
+          # file was deleted from archive, remove it from repository
+          logging.info('Photo %s was deleted from the archive, replacing' +
+                       ' it with the new one.', db_result[1])
+          if (_archive_photo(photo, lib_base_dir, rep, group_id) and
+              delete_source_on_success):
+            files_to_delete.append(photo.source_path)
+        else:
+          archive_count += 1
+          if (_archive_photo(photo, lib_base_dir, rep, group_id) and
+              delete_source_on_success):
+            files_to_delete.append(photo.source_path)
       else:
-        if (_archive_photo(photo, lib_base_dir, rep, group_id) and
-            delete_source_on_success):
-          files_to_delete.append(photo.source_path)
-    else:
-      logging.warning('Found a non-file when looking for photos: %s, ' +
-                      'it will not be modified', path)
+        logging.warning('Found a non-file when looking for photos: %s, ' +
+                        'it will not be modified', path)
 
   rep.close()
   for filepath in files_to_delete:
     os.remove(filepath)
-  logging.info('Successfully completed archiving %d files', len(photos))
+  logging.info('Successfully completed archiving %d files', archive_count)
 
 
 

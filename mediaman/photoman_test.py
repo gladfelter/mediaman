@@ -229,9 +229,10 @@ class PhotoManFunctionalTests(unittest.TestCase):
           os.path.join(tmpdir, 'src/IMG_1427.JPG'),
           os.path.join(tmpdir, 'src/594-9436_IMG.JPG'),
           os.path.join(tmpdir, 'src/105-0555_IMG.JPG'),
-          os.path.join(tmpdir, 'src/gnexus 160.jpg')]
+          os.path.join(tmpdir, 'src/foo/gnexus 160.jpg')]
       for filepath in files:
-        self.assertTrue(os.path.isfile(filepath))
+        self.assertTrue(os.path.isfile(filepath), 'Expect %s exists'
+                        % filepath)
     finally:
       shutil.rmtree(tmpdir)
 
@@ -248,7 +249,34 @@ class PhotoManFunctionalTests(unittest.TestCase):
           os.path.join(tmpdir, 'src/105-0555_IMG.JPG'),
           os.path.join(tmpdir, 'src/gnexus 160.jpg')]
       for filepath in files:
-        self.assertFalse(os.path.isfile(filepath))
+        self.assertFalse(os.path.isfile(filepath), 'Expect %s is deleted' %
+                         filepath)
+    finally:
+      shutil.rmtree(tmpdir)
+
+  @patch('grp.getgrnam', new=lambda x: [None, None, -1])
+  @patch('os.chown', new=lambda x, y, z : None)
+  def testRefreshDatabaseWithDeleteSource(self):
+    (srcdir, mediadir, tmpdir) = self._setup_test_data()
+    try:
+      photoman._find_and_archive_photos(srcdir, mediadir, True, 'foo')
+      # Re-run and delete source, this should not cause any
+      # library files to be deleted
+      photoman._find_and_archive_photos(srcdir, mediadir, True, 'foo')
+      files = [
+          os.path.join(tmpdir,
+                       'dest/media/photos/2012/07_July/gnexus 160.jpg'),
+          os.path.join(tmpdir, 'dest/media/photos/2002/'
+                       + '10_October/105-0555_IMG.JPG'),
+          os.path.join(tmpdir,
+                       'dest/media/photos/2003/03_March/594-9436_IMG.JPG'),
+          os.path.join(tmpdir,
+                       'dest/media/photos/2006/03_March/IMG_1427.JPG'),
+          os.path.join(tmpdir,
+                       'dest/media/photos/2006/06_June/DSC09012.JPG')]
+      for filepath in files:
+        self.assertTrue(os.path.isfile(filepath), 'Expect %s wasnt deleted'
+                        % filepath)
     finally:
       shutil.rmtree(tmpdir)
 
@@ -339,13 +367,21 @@ class PhotoManFunctionalTests(unittest.TestCase):
     self._copy_test_images(srcdir, '')
     return (srcdir, mediadir, tmpdir)
 
-  def _copy_test_images(self, srcdir, prefix):
+  def _copy_test_images(self, destdir, prefix):
     scriptdir = os.path.dirname(os.path.realpath(__file__))
     test_data_dir = os.path.join(scriptdir, 'test')
     test_files = glob.glob(os.path.join(test_data_dir, '*.jpg'))
     test_files += glob.glob(os.path.join(test_data_dir, '*.JPG'))
-    for test_file in test_files:
-      dup_file = os.path.join(srcdir, prefix + os.path.basename(test_file))
+    test_files = sorted(test_files)
+    self.assertEquals(5, len(test_files))
+    if not os.path.exists(os.path.join(destdir, 'foo')):
+      os.mkdir(os.path.join(destdir, 'foo'))
+    for test_file in test_files[:-1]:
+      dup_file = os.path.join(destdir, prefix + os.path.basename(test_file))
+      shutil.copy(test_file, dup_file)
+    for test_file in test_files[-1:]:
+      dup_file = os.path.join(destdir, 'foo',
+                              prefix + os.path.basename(test_file))
       shutil.copy(test_file, dup_file)
     
   def _print_tree(self, basedir):
