@@ -6,17 +6,13 @@ Organizes source photos by date and updates a sqlite database with
 metadata about the photos. Detects duplicates and ignores them.
 """
 import calendar
+import media_common
 import gflags
-import grp
-import hashlib
 import logging
 import os
 import os.path
-import pyexiv2
 import shutil
 import sys
-import time
-from sqlite3 import dbapi2 as sqlite
 
 gflags.DEFINE_string('src_dir', None, 'Directory to scan for photos')
 gflags.DEFINE_string('media_dir', None, 'Directory of media library')
@@ -24,232 +20,13 @@ gflags.DEFINE_boolean('del_src', False, 'Delete the source image if' +
                       ' succesfully archived')
 gflags.DEFINE_boolean('scan_missing', False, 'Scan for deleted files in' +
                       ' the archive and remove them from the database')
+gflags.DEFINE_string('group_name', '', 'The name of the group to use' +
+                     ' for the destination file')
+
+gflags.MarkFlagAsRequired('src_dir')
+gflags.MarkFlagAsRequired('media_dir')
 
 FLAGS = gflags.FLAGS
-
-class Repository():
-
-  """Represents a repository of media items, such as photos"""
-
-  def __init__(self):
-    self.con = None
-
-  def open(self, lib_base_dir):  # opens, returns biggest ID or -1 on error
-    """Opens or creates the repository and media library"""
-    self._tree_setup(lib_base_dir)
-    # create data store if it doesn't exist
-    db_path = os.path.join(lib_base_dir, 'media.db')
-    if not os.access(db_path, os.R_OK|os.W_OK):
-      logging.warning("can't open %s, will attempt to create it", 
-                      lib_base_dir)
-      # initialize the database
-      self.con = sqlite.connect(os.path.join(lib_base_dir, "media.db"))
-      cur = self.con.cursor()
-      cur.execute('''create table photos
-        (id integer primary key,
-        flags text,
-        md5 varchar(16),
-        size integer,
-        description text,
-        source_info text,
-        archive_path text,
-        timestamp integer,
-        camera_make text,
-        camera_model text,
-        unique (md5) on conflict replace);
-        ''')
-    else:  
-      self.con = sqlite.connect(os.path.join(lib_base_dir, "media.db"))
-    if self.con <= 0:
-      raise RuntimeError("Could not open the media database" +
-                         "for an unknown reason")
-
-  def close(self):
-    """Closes the repository."""
-    self.con.commit()
-    self.con.close()
-    self.con = None
-  
-  def add_or_update(self, photo):
-    """Adds a photo to the repository."""
-    cur = self.con.cursor()
-    cur.execute('''
-INSERT OR REPLACE INTO photos (id, flags, md5, size, description,
-                               source_info, camera_make,
-                               camera_model, archive_path,
-                               timestamp)
-SELECT old.id, old.flags, new.md5, new.size, old.description,
-       old.source_info, new.camera_make, new.camera_model,
-       new.archive_path, new.timestamp
-FROM ( SELECT
-     :md5             AS md5,
-     :size            AS size,
-     :camera_make     AS camera_make,
-     :camera_model    AS camera_model,
-     :archive_path     AS archive_path,
-     :timestamp       AS timestamp
- ) AS new
-LEFT JOIN (
-           SELECT id, flags, description, source_info, md5
-           FROM photos
-) AS old ON new.md5 = old.md5;
-                ''', photo.__dict__)
-    self.con.commit()
-    return cur.lastrowid
-
-  def remove(self, photo):
-    """Removes a photo from the repository."""
-    cur = self.con.cursor()
-    cur.execute('''
-        DELETE FROM photos WHERE md5 = ?''',
-        [photo.md5])
-
-  def lookup_hash(self, md5):
-    """Returns the filepath and id of the existing file with the
-    provided hash, or None if no such file exists"""
-    cur = self.con.cursor()
-    logging.info('looking for hash %s', md5)
-    rows = cur.execute('''
-        SELECT id, archive_path FROM photos WHERE md5 = :md5 ''', locals())
-    row = rows.fetchone()
-    if row != None:
-      logging.debug('Fond row object %s', row)
-      return row
-
-    return None
-
-  def iter_all_photos(self):
-    """Returns an iterator returning (id, filepath) for all photos"""
-    cur = self.con.cursor()
-    cur.execute('''
-      select id, archive_path FROM photos''')
-    return cur
-
-  def remove_photos(self, photo_ids):
-    cur = self.con.cursor()
-    query = (' DELETE from photos where id in (' +
-            ','.join('?'*len(photo_ids)) + ')')
-    cur.execute(query, photo_ids)
-
-  @staticmethod
-  def _tree_setup(lib_base_dir):
-    """Creates the media library directories"""
-    if not os.path.exists(lib_base_dir):
-      os.mkdir(lib_base_dir, 0755)
-    photos_dir = os.path.join(lib_base_dir, 'photos')
-    if not os.path.exists(photos_dir):
-      os.mkdir(photos_dir, 0755)
-
-
-class Photo():
-
-  """Represents a a file containing a photo"""
-  
-  def __init__(self, source_path):
-    self.db_id = self.flags = self.md5 = None
-    self.size = self.description = None
-    self.timestamp = self.archive_path = None
-    self.camera_make = self.camera_model = None
-    self.source_info = None
-    self.source_path = source_path
-    self.metadata_read = False
-
-  def get_path_parts(self):
-    """Gets the year/month/basename tuple for the file, based on its
-    creation time metadata."""
-    if not self.metadata_read:
-      self.load_metadata()
-    time_struct = time.localtime(self.timestamp)
-    return time_struct[0:2] + (os.path.basename(self.source_path),)
- 
-  def load_metadata(self):
-    """Loads relevant exif and filesystem metadata for the photo"""
-    metadata = None
-    try:
-      metadata = pyexiv2.ImageMetadata(self.source_path)
-      metadata.read()
-    except IOError:
-      metadata = None
-      logging.warning("%s contains no EXIF data", self.source_path)
-    except Exception:
-      metadata = None
-      logging.warning('An unexpected error occurred while reading '
-                      + 'exif data from %s. Will attempt to recover',
-                      self.source_path)
-
-    if metadata is not None:
-      image_keys = frozenset(metadata.exif_keys)
-      self._load_exif_timestamp(metadata, image_keys)
-      self._load_camera_make(metadata, image_keys)
-      self._load_camera_model(metadata, image_keys)
-
-    self._load_filesystem_timestamp()
-    self._load_file_size()
-    self.md5 = self._get_hash()
-    self.metadata_read = True
-
-  def _load_file_size(self):
-    """ Gets the size in bytes of the photo from the filesystem"""
-    try:
-      self.size = os.path.getsize(self.source_path)
-    except os.error:
-      self.size = 0
-      logging.warning('Could not read file size of %s', self.source_path)
-
-  def _load_camera_model(self, metadata, image_keys):
-    """Gets the camera's model for the photo from the exif data."""
-    if 'Exif.Image.Model' in image_keys:
-      self.camera_model = metadata['Exif.Image.Model'].value
-
-  def _load_camera_make(self, metadata, image_keys):
-    """Gets the camera's make for the photo from the exif data."""
-    if 'Exif.Image.Make' in image_keys:
-      self.camera_make = metadata['Exif.Image.Make'].value
-
-  def _load_exif_timestamp(self, metadata, image_keys):
-    """Gets the photo's creation time from the photo's exif data"""
-    time_keys = ['Exif.Image.DateTimeOriginal', 'Exif.Photo.DateTime',
-                 'Exif.Photo.DateTimeDigitized']
-    for key in time_keys:
-      if key in image_keys:
-        try:
-          time_struct = metadata[key].value.timetuple()
-          self.timestamp = time.mktime(time_struct)
-          break
-        except (ValueError, AttributeError):
-          logging.warning('There was a problem reading the exif '
-                          + 'timestamp for %s.', self.source_path)
-
-  def _load_filesystem_timestamp(self):
-    """Gets the last modified timestamp for the photo."""
-    if self.timestamp is None:
-      try:
-        self.timestamp = os.path.getmtime(self.source_path)
-      except os.error:
-        logging.warning('Could not access image''s timestamp' +
-                        ' by any means, setting it to the epoch start.')
-        self.timestamp = 0
-      
-  def _get_hash(self):
-    """Computes the md5 hash."""
-    photo = open(self.source_path, 'r')
-    metadata = hashlib.md5()
-    stuff = photo.read(8192)
-    while len(stuff) > 0:
-      metadata.update(stuff)
-      stuff = photo.read(8192)
-    photo.close()
-    return (metadata.hexdigest())
-
-
-def get_group_id(group_name):
-  """ Returns the group id for the given group name """
-  if group_name is not None:
-    return grp.getgrnam(group_name)[2]
-  else:
-    # means 'don't change group'
-    return -1
-
 
 def _find_and_archive_photos(search_dir,
                              lib_base_dir,
@@ -263,18 +40,18 @@ def _find_and_archive_photos(search_dir,
   """
   
 
-  rep = Repository()
+  rep = media_common.Repository()
   rep.open(lib_base_dir)
   paths = os.walk(search_dir)
   results = []
-  group_id = get_group_id(group_name)
+  group_id = media_common.get_group_id(group_name)
   files_to_delete = []
   archive_count = 0
   for (dirpath, dirnames, filenames) in paths:
     for filename in filenames:
       path = os.path.join(dirpath, filename)
       if os.path.isfile(path):
-        photo = Photo(path)
+        photo = media_common.Photo(path)
         photo.load_metadata()
         db_result = rep.lookup_hash(photo.md5)
         if (db_result is not None
@@ -330,7 +107,7 @@ def _archive_photo(photo,
   _copy_photo(photo, lib_base_dir, group_id)
   photo.db_id = repository.add_or_update(photo)
   if photo.db_id > 0 and os.path.isfile(photo.archive_path):
-    dest_photo = Photo(photo.archive_path)
+    dest_photo = media_common.Photo(photo.archive_path)
     dest_photo.load_metadata()
     if dest_photo.md5 is not None and dest_photo.md5 == photo.md5:
       logging.info('%s was successfully copied to destination %s', 
@@ -389,7 +166,7 @@ def _get_month_name(month):
 
 def _scan_missing_photos(lib_base_dir):
   """Removes photos from the repository that don't exist in the archive"""
-  rep = Repository()
+  rep = media_common.Repository()
   try:
     rep.open(lib_base_dir)
     missing_files = []
@@ -418,33 +195,16 @@ def _recursive_iter(current_dir, operation):
       results += _recursive_iter(current_dir, operation)
   return results
 
-def _configure_logging():
-  """Configures logging to stderr, file."""
-  root = logging.getLogger('')
-  handler = logging.StreamHandler(sys.stderr)
-  formatter = logging.Formatter('%(asctime)s %(filename)s' +
-                                ':%(lineno)d %(levelname)s %(message)s')
-  handler.setFormatter(formatter)
-  root.addHandler(handler)
-  file_handler = logging.FileHandler('/var/tmp/photoman.log')
-  file_handler.setFormatter(formatter)
-  root.addHandler(file_handler)
-  root.setLevel(logging.INFO)
-
 
 def _main(argv):
   """Main script entry point """
   try:
-    gflags.DEFINE_string('group_name', '', 'The name of the group to use' +
-                         ' for the destination file')
-    gflags.MarkFlagAsRequired('src_dir')
-    gflags.MarkFlagAsRequired('media_dir')
     argv = FLAGS(argv)  # parse flags
   except gflags.FlagsError, error:
     print '%s\nUsage: %s ARGS\n%s' % (error, sys.argv[0], FLAGS)
     sys.exit(1)
   try:
-    _configure_logging()
+    media_common.configure_logging('photoman.log')
     _find_and_archive_photos(FLAGS.src_dir, FLAGS.media_dir,
                              FLAGS.del_src, FLAGS.group_name)
     if FLAGS.scan_missing:
