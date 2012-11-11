@@ -194,6 +194,7 @@ gflags.DEFINE_list('ignore_extensions', [ '.ini', '.db' ],
 gflags.MarkFlagAsRequired('staging_dir')
 FLAGS = gflags.FLAGS
 
+
 def _main(argv):
   """Main script entry point """
   try:
