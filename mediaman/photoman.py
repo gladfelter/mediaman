@@ -24,11 +24,6 @@ gflags.DEFINE_boolean('del_src', False, 'Delete the source image if' +
                       ' succesfully archived')
 gflags.DEFINE_boolean('scan_missing', False, 'Scan for deleted files in' +
                       ' the archive and remove them from the database')
-gflags.DEFINE_string('group_name', '', 'The name of the group to use' +
-                      ' for the destionation file')
-
-gflags.MarkFlagAsRequired('src_dir')
-gflags.MarkFlagAsRequired('media_dir')
 
 FLAGS = gflags.FLAGS
 
@@ -247,7 +242,7 @@ class Photo():
     return (metadata.hexdigest())
 
 
-def _get_group_id(group_name):
+def get_group_id(group_name):
   """ Returns the group id for the given group name """
   if group_name is not None:
     return grp.getgrnam(group_name)[2]
@@ -272,7 +267,7 @@ def _find_and_archive_photos(search_dir,
   rep.open(lib_base_dir)
   paths = os.walk(search_dir)
   results = []
-  group_id = _get_group_id(group_name)
+  group_id = get_group_id(group_name)
   files_to_delete = []
   archive_count = 0
   for (dirpath, dirnames, filenames) in paths:
@@ -440,6 +435,10 @@ def _configure_logging():
 def _main(argv):
   """Main script entry point """
   try:
+    gflags.DEFINE_string('group_name', '', 'The name of the group to use' +
+                         ' for the destination file')
+    gflags.MarkFlagAsRequired('src_dir')
+    gflags.MarkFlagAsRequired('media_dir')
     argv = FLAGS(argv)  # parse flags
   except gflags.FlagsError, error:
     print '%s\nUsage: %s ARGS\n%s' % (error, sys.argv[0], FLAGS)
