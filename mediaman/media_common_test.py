@@ -28,8 +28,11 @@ class TestRepository(unittest.TestCase):
     conn_mock.cursor.return_value = cur_mock()
     connect.return_value = conn_mock
     self.rep.open('/tmp/bar')
-    access.assert_called_with('/tmp/bar/media.db', ANY)
-    connect.assert_called_with('/tmp/bar/media.db')
+    db_name = '/tmp/bar/media.db'
+    if os.name == 'nt':
+      db_name = '/tmp/bar\\media.db'
+    access.assert_called_with(db_name, ANY)
+    connect.assert_called_with(db_name)
     self.assertFalse(conn_mock.cursor.called,
                     'expect cursor not needed for existing database')
     self.assertTrue(tree_setup.called,
@@ -45,8 +48,11 @@ class TestRepository(unittest.TestCase):
     conn_mock.cursor.return_value = cur_mock
     connect.return_value = conn_mock
     self.rep.open('/tmp/bar')
-    access.assert_called_with('/tmp/bar/media.db', ANY)
-    connect.assert_called_with('/tmp/bar/media.db')
+    db_name = '/tmp/bar/media.db'
+    if os.name == 'nt':
+      db_name = '/tmp/bar\\media.db'
+    access.assert_called_with(db_name, ANY)
+    connect.assert_called_with(db_name)
     self.assertTrue(conn_mock.cursor.called,
                     'expect cursor needed for new database')
     self.assertTrue(cur_mock.execute.called,
@@ -122,6 +128,39 @@ class TestRepository(unittest.TestCase):
     fetch_mock.return_value = None
     self.assertEquals(None, rep.lookup_hash('bar'))
 
+  def test_get_db_name(self):
+    rep = media_common.Repository()
+    self.assertEquals('media.db', rep._get_db_name())
+
+  def test_init_db(self):
+    rep = media_common.Repository()
+    cur = Mock()
+    rep._init_db(cur)
+    self.assertTrue(cur.execute.called)
+
+
+class TestCollectionRepository(unittest.TestCase):
+  
+  def test_add_or_update(self):
+    rep = media_common.CollectionRepository()
+    photo = Mock()
+    rep.con = Mock()
+    rep.con.cursor.return_value.lastrowid = 42
+    self.assertEquals(42, rep.add_or_update(photo))
+    self.assertTrue(rep.con.cursor.called)
+    self.assertTrue(rep.con.cursor.return_value.execute.called)
+    self.assertTrue(rep.con.commit.called)
+
+  def test_get_db_name(self):
+    rep = media_common.CollectionRepository()
+    self.assertEquals('local_media.db', rep._get_db_name())
+
+  def test_init_db(self):
+    rep = media_common.CollectionRepository()
+    cur = Mock()
+    rep._init_db(cur)
+    self.assertTrue(cur.execute.called)
+
 
 class TestPhoto(unittest.TestCase):
 
@@ -189,13 +228,15 @@ class TestPhoto(unittest.TestCase):
     self.photo._load_camera_model(m, image_keys)
     self.assertEquals('Bar', self.photo.camera_model)
 
-class TestUtilityFunctions(unittest.TestCase):
 
-  @patch('grp.getgrnam')
-  def test_get_group_id(self, getgrnam):
-    getgrnam.return_value = [None, None, 42]
-    self.assertEquals(42, media_common.get_group_id('foo'))
-    self.assertEquals(-1, media_common.get_group_id(None))
+if os.name != 'nt':
+  class TestUtilityFunctions(unittest.TestCase):
+
+    @patch('grp.getgrnam')
+    def test_get_group_id(self, getgrnam):
+      getgrnam.return_value = [None, None, 42]
+      self.assertEquals(42, media_common.get_group_id('foo'))
+      self.assertEquals(-1, media_common.get_group_id(None))
 
 
 if __name__ == '__main__':

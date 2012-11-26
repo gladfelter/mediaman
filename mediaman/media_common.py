@@ -8,10 +8,10 @@ import os.path
 import sys
 import xmlrpclib
 import time
-import grp
 import hashlib
 import pyexiv2
 from sqlite3 import dbapi2 as sqlite
+
 if os.name == 'nt':
   from ctypes import windll, wintypes
   DWORD = wintypes.DWORD
@@ -43,6 +43,8 @@ if os.name == 'nt':
                            0x5C, 0x3B, 0xC3, 0xBB)
   CSIDL_LOCAL_APPDATA = 0x001c
   CSIDL_MYPICTURES = 0x27
+else:
+  import grp
 
 
 class Repository():
@@ -56,28 +58,18 @@ class Repository():
     """Opens or creates the repository and media library"""
     self._tree_setup(lib_base_dir)
     # create data store if it doesn't exist
-    db_path = os.path.join(lib_base_dir, 'media.db')
+    db_path = os.path.join(lib_base_dir, self._get_db_name())
     if not os.access(db_path, os.R_OK|os.W_OK):
       logging.warning("can't open %s, will attempt to create it", 
                       lib_base_dir)
       # initialize the database
-      self.con = sqlite.connect(os.path.join(lib_base_dir, "media.db"))
+      self.con = sqlite.connect(os.path.join(lib_base_dir,
+          self._get_db_name()))
       cur = self.con.cursor()
-      cur.execute('''create table photos
-        (id integer primary key,
-        flags text,
-        md5 varchar(16),
-        size integer,
-        description text,
-        source_info text,
-        archive_path text,
-        timestamp integer,
-        camera_make text,
-        camera_model text,
-        unique (md5) on conflict replace);
-        ''')
+      self._init_db(cur)
     else:  
-      self.con = sqlite.connect(os.path.join(lib_base_dir, "media.db"))
+      self.con = sqlite.connect(os.path.join(lib_base_dir,
+          self._get_db_name()))
     if self.con <= 0:
       raise RuntimeError("Could not open the media database" +
                          "for an unknown reason")
@@ -149,14 +141,65 @@ LEFT JOIN (
             ','.join('?'*len(photo_ids)) + ')')
     cur.execute(query, photo_ids)
 
-  @staticmethod
-  def _tree_setup(lib_base_dir):
+  def _tree_setup(self, lib_base_dir):
     """Creates the media library directories"""
     if not os.path.exists(lib_base_dir):
       os.mkdir(lib_base_dir, 0755)
     photos_dir = os.path.join(lib_base_dir, 'photos')
     if not os.path.exists(photos_dir):
       os.mkdir(photos_dir, 0755)
+
+  def _get_db_name(self):
+    return 'media.db'
+
+  def _init_db(self, db_cur):
+      db_cur.execute('''create table photos
+        (id integer primary key,
+        flags text,
+        md5 varchar(16),
+        size integer,
+        description text,
+        source_info text,
+        archive_path text,
+        timestamp integer,
+        camera_make text,
+        camera_model text,
+        unique (md5) on conflict replace);
+        ''')
+
+
+class CollectionRepository(Repository):
+
+  def add_or_update(self, photo):
+    """Adds a photo to the repository."""
+    cur = self.con.cursor()
+    cur.execute('''
+INSERT OR REPLACE INTO photos (id, archive_path, md5, modified)
+SELECT old.id, old.archive_path, new.md5, new.modified
+FROM ( SELECT
+     :md5             AS md5,
+     :modified        AS modified
+     :archive_path    AS archive_path
+ ) AS new
+LEFT JOIN (
+           SELECT id, md5, modified, archive_path
+           FROM photos
+) AS old ON new.archive_path = old.archive_path;
+                ''', photo.__dict__)
+    self.con.commit()
+    return cur.lastrowid
+
+  def _get_db_name(self):
+    return 'local_media.db'
+
+  def _init_db(self, db_cur):
+      db_cur.execute('''create table photos
+        (id integer primary key,
+        md5 varchar(16),
+        archive_path text,
+        modified integer,
+        unique (archive_path) on conflict replace);
+        ''')
 
 
 class Photo():

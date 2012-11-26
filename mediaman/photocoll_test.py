@@ -4,6 +4,7 @@
 import unittest
 import photocoll
 import os
+import media_common
 import os.path
 from mock import *
 import pickle
@@ -15,14 +16,14 @@ class PhotoCollectionTests(unittest.TestCase):
     pass
 
   @patch('photocoll.find_new_photos')
-  def test_collection(self, find_photos):
+  @patch('photocoll.get_repository')
+  def test_collection(self, get_repository, find_photos):
     find_photos.return_value = []
     photocoll.collect_photos(None, None, set())
-    pass
 
   @patch('os.path.exists')
   @patch('photocoll.CollectionStatus')
-  @patch('photocoll.configure_status_dir')
+  @patch('media_common.configure_status_dir')
   def test_read_collection_status(self, configure_status_dir,
                                   stat, exists):
     configure_status_dir.return_value = 'c:\\foo'
@@ -33,7 +34,7 @@ class PhotoCollectionTests(unittest.TestCase):
 
   @patch('os.path.exists')
   @patch('photocoll.CollectionStatus')
-  @patch('photocoll.configure_status_dir')
+  @patch('media_common.configure_status_dir')
   def test_read_collection_status_missing(self, configure_status_dir,
                                           stat, exists):
     configure_status_dir.return_value = '\\foo'
@@ -41,7 +42,7 @@ class PhotoCollectionTests(unittest.TestCase):
     status = photocoll.read_collection_status('c:\\photos')
     stat.assert_called_with(None, 'c:\\photos') 
 
-  @patch('photocoll.configure_status_dir')
+  @patch('media_common.configure_status_dir')
   def test_write_collection_status(self, configure_status_dir):
     status = MagicMock()
     configure_status_dir.return_value = 'c:\\foo'
@@ -52,21 +53,25 @@ class PhotoCollectionTests(unittest.TestCase):
   @patch('os.path.getctime')
   @patch('os.walk')
   def test_find_new_photos(self, walk, ctime, mtime): 
-    walk.return_value = [ ( 'c:\\foo', [ 'bar' ],
-                            [ 'baz', 'qux', 'quy', 'quz.txt' ] ),
-                          ( 'c:\\foo\\bar', [ ], [ ] ) ]
-    mtimes = { 'c:\\foo\\baz' : 42,
-               'c:\\foo\\qux' : 55,
-               'c:\\foo\\quy' : 35,
-               'c:\\foo\\quz.txt' : 90 }
-    ctimes = { 'c:\\foo\\baz' : 42,
-               'c:\\foo\\qux' : 55,
-               'c:\\foo\\quy' : 70,
-               'c:\\foo\\quz.txt' : 90 }
+    walk.return_value = [ ( 'c:\\foo', [ 'bar', 'bax' ],
+                            [ 'baz', 'quz.txt' ] ),
+                          ( 'c:\\foo\\bar', [ ], [ 'qux', 'quy.txt' ] ),
+                          ( 'c:\\foo\\bax', [ ], [ 'bay', 'baw' ] ) ]
+    mtimes = { 'c:\\foo' : 42,
+               'c:\\foo\\bar' : 55,
+               'c:\\foo\\bax' : 47,
+               }
+    ctimes = { 'c:\\foo' : 30,
+               'c:\\foo\\bar' : 40,
+               'c:\\foo\\bax' : 61,
+             }
     mtime.side_effect = lambda filename : mtimes[filename]
     ctime.side_effect = lambda filename : ctimes[filename]
-    results = photocoll.find_new_photos(50, 'c:\\foo', set(['.txt']))
-    self.assertEquals([ 'c:\\foo\\qux', 'c:\\foo\quy' ], results)
+    rep = Mock()
+    results = photocoll.find_new_photos(rep, 50, 'c:\\foo', set(['.txt']))
+    self.assertEquals([ 'c:\\foo\\bar\\qux',
+                        'c:\\foo\\bax\\bay',
+                        'c:\\foo\\bax\\baw', ], results)
 
 
   @patch('os.path.exists')
