@@ -80,7 +80,8 @@ class PhotoCollectionTests(unittest.TestCase):
     existing = { 'c:\\foo\\bar.txt', 
                  'c:\\foo\\bar_1.txt', 'c:\\foo\\bar_3.txt' }
     exists.side_effect = lambda filename : filename in existing
-    photocoll.copy_files([ 'c:\\baz\\bar.txt' ], 'c:\\foo')
+    rep = Mock()
+    photocoll.copy_files(rep, [ 'c:\\baz\\bar.txt' ], 'c:\\foo')
     copy2.assert_called_with('c:\\baz\\bar.txt', 'c:\\foo\\bar_2.txt')
     self.assertEquals(1, copy2.call_count)
 

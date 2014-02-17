@@ -194,7 +194,7 @@ class TestPhoto(unittest.TestCase):
           with patch.object(self.photo, '_load_file_size') as fs:
             with patch.object(self.photo,
                               '_load_filesystem_timestamp') as fts:
-              with patch.object(self.photo, '_get_hash') as gh:
+              with patch.object(self.photo, 'get_hash') as gh:
                 self.photo.load_metadata()
                 self.assertTrue(ts.called)
                 self.assertTrue(self.photo._load_camera_make.called)

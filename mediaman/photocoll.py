@@ -78,12 +78,20 @@ def find_new_photos(rep, start_time, src_dir, ignore_extensions):
         filepath = os.path.join(dirpath, filename)
         prefix, suffix = os.path.splitext(filepath)
         if suffix not in ignore_extensions:
-          results.append(os.path.join(dirpath, filename))
+          if True:
+            results.append(os.path.join(dirpath, filename))
+          else:
+            photo = rep.lookup_filepath(filepath)
+            if photo is None:
+              results.append(filepath)
+            elif (os.path.getmtime(filepath) != photo.modified
+                  and photo.md5 != media_common.Photo(filepath).get_hash()):
+              results.append(filepath)    
 
   return results
 
 
-def copy_files(files, dest_dir):
+def copy_files(rep, files, dest_dir):
   for filepath in files:
     dirname, filename = os.path.split(filepath)
     prefix, suffix = os.path.splitext(filename)
@@ -110,7 +118,7 @@ def collect_photos(src_dir, staging_dir, ignore_extensions):
     rep = get_repository()
     new_photos = find_new_photos(rep, last_coll, src_dir, ignore_extensions)
     logging.info('Found %d new photos', len(new_photos))
-    copy_files(new_photos, staging_dir)
+    copy_files(rep, new_photos, staging_dir)
     # finally, since successful:
     status.set_last_collection(start_time)
     write_collection_status(status)

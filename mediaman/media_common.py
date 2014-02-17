@@ -202,12 +202,28 @@ LEFT JOIN (
         ''')
 
 
+  def lookup_filepath(self, filepath):
+    """Returns the filepath and id of the existing file with the
+    provided hash, or None if no such file exists"""
+    cur = self.con.cursor()
+    logging.info('looking for hash %s', md5)
+    rows = cur.execute('''
+        SELECT id, archive_path FROM photos WHERE md5 = :md5 ''', locals())
+    row = rows.fetchone()
+    if row != None:
+      logging.debug('Fond row object %s', row)
+      return row
+
+    return None
+
+
 class Photo():
 
   """Represents a a file containing a photo"""
   
   def __init__(self, source_path):
     self.db_id = self.flags = self.md5 = None
+    self.modified = None
     self.size = self.description = None
     self.timestamp = self.archive_path = None
     self.camera_make = self.camera_model = None
@@ -246,7 +262,7 @@ class Photo():
 
     self._load_filesystem_timestamp()
     self._load_file_size()
-    self.md5 = self._get_hash()
+    self.md5 = self.get_hash()
     self.metadata_read = True
 
   def _load_file_size(self):
@@ -291,7 +307,7 @@ class Photo():
                         ' by any means, setting it to the epoch start.')
         self.timestamp = 0
       
-  def _get_hash(self):
+  def get_hash(self):
     """Computes the md5 hash."""
     photo = open(self.source_path, 'r')
     metadata = hashlib.md5()
