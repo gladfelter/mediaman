@@ -42,7 +42,7 @@ def _find_and_archive_photos(search_dir, lib_base_dir,
                                 path)
                 continue
 
-            db_result = rep.lookup_hash(photo.md5)
+            db_result = rep.lookup_hash(photo.md5, size=photo.size)
             if (db_result is not None
                     and os.path.abspath(db_result[1]) == os.path.abspath(path)):
                 logging.info('Found existing archived photo %s, ignoring',
@@ -151,6 +151,23 @@ def _get_month_name(month):
 
 def _scan_missing_photos(lib_base_dir):
     """Removes photos from the repository that don't exist in the archive"""
+    # Guard: verify the archive directory is actually accessible
+    photos_dir = os.path.join(lib_base_dir, 'photos')
+    if not os.path.isdir(photos_dir):
+        logging.error('Archive photos directory %s does not exist. '
+                       'Refusing to scan for missing photos — is the '
+                       'disk mounted?', photos_dir)
+        return
+    # Additional guard: if the directory exists but is empty (unmounted disk
+    # pointing at an empty mountpoint), a subdirectory check adds confidence
+    subdirs = [d for d in os.listdir(photos_dir)
+               if os.path.isdir(os.path.join(photos_dir, d))]
+    if not subdirs:
+        logging.error('Archive photos directory %s contains no '
+                       'subdirectories. Refusing to scan for missing '
+                       'photos — is the disk mounted?', photos_dir)
+        return
+
     rep = media_common.Repository()
     try:
         rep.open(lib_base_dir)
@@ -162,6 +179,8 @@ def _scan_missing_photos(lib_base_dir):
                                 'from the database.', filepath)
                 missing_files.append(db_id)
         if missing_files:
+            logging.warning('Removing %d missing photos from database',
+                            len(missing_files))
             rep.remove_photos(missing_files)
     finally:
         rep.close()
@@ -181,6 +200,16 @@ def main():
     parser.add_argument('--group_name', default='',
                         help='Group for destination file ownership')
     args = parser.parse_args()
+
+    # Safety: refuse to run if src_dir is inside the archive itself
+    archive_photos = os.path.abspath(os.path.join(args.media_dir, 'photos'))
+    src_abs = os.path.abspath(args.src_dir)
+    if src_abs.startswith(archive_photos + os.sep) or src_abs == archive_photos:
+        logging.error('Source directory %s is inside the archive %s. '
+                       'Refusing to run — this would delete archived '
+                       'photos if --del_src is set.', args.src_dir,
+                       archive_photos)
+        sys.exit(1)
 
     try:
         media_common.configure_logging('photoman.log')

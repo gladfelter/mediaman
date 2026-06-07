@@ -112,6 +112,20 @@ class TestRepository(unittest.TestCase):
         fetch_mock.return_value = None
         self.assertEqual(None, rep.lookup_hash('bar'))
 
+    def test_lookup_hash_with_size(self):
+        """lookup_hash with size parameter adds size to WHERE clause."""
+        rep = media_common.Repository()
+        rep.con = MagicMock()
+        execute = rep.con.cursor.return_value.execute
+        fetch_mock = execute.return_value.fetchone
+        fetch_mock.return_value = (42, '/tmp/foo')
+        result = rep.lookup_hash('abc', size=12345)
+        self.assertEqual('/tmp/foo', result[1])
+        # Verify the query includes both md5 and size
+        call_args = execute.call_args[0]
+        self.assertIn('size', call_args[0].lower())
+        self.assertEqual({'md5': 'abc', 'size': 12345}, call_args[1])
+
 
 class TestPhoto(unittest.TestCase):
 

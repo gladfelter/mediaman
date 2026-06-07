@@ -94,14 +94,25 @@ LEFT JOIN (
         cur = self.con.cursor()
         cur.execute('DELETE FROM photos WHERE md5 = ?', [photo.md5])
 
-    def lookup_hash(self, md5):
+    def lookup_hash(self, md5, size=None):
         """Returns the filepath and id of the existing file with the
-        provided hash, or None if no such file exists"""
+        provided hash, or None if no such file exists.
+
+        If size is provided, the lookup also matches on file size
+        to guard against MD5 collisions.
+        """
         cur = self.con.cursor()
-        logging.info('looking for hash %s', md5)
-        rows = cur.execute(
-            'SELECT id, archive_path FROM photos WHERE md5 = :md5 ',
-            {'md5': md5})
+        if size is not None:
+            logging.info('looking for hash %s size %d', md5, size)
+            rows = cur.execute(
+                'SELECT id, archive_path FROM photos '
+                'WHERE md5 = :md5 AND size = :size',
+                {'md5': md5, 'size': size})
+        else:
+            logging.info('looking for hash %s', md5)
+            rows = cur.execute(
+                'SELECT id, archive_path FROM photos WHERE md5 = :md5',
+                {'md5': md5})
         row = rows.fetchone()
         if row is not None:
             logging.debug('Found row object %s', row)

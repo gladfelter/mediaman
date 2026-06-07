@@ -24,7 +24,12 @@ def _create_parsable_gnexus_copies(search_dir):
     Useful for the PS3 Media Server, which currently cannot parse (and
     therefore serve) files with array ISO EXIF data.
     """
+    total = 0
+    fixed = 0
+    errors = 0
+    skipped = 0
     for (dirpath, _dirnames, filenames) in os.walk(search_dir):
+        total += len(filenames)
         for filename in filenames:
             filepath = os.path.join(dirpath, filename)
             prefix, suffix = os.path.splitext(filepath)
@@ -34,6 +39,7 @@ def _create_parsable_gnexus_copies(search_dir):
             sanitized_filepath = os.path.join(
                 dirpath, '%s_isoremoved%s' % (prefix, suffix))
             if os.path.exists(sanitized_filepath):
+                skipped += 1
                 continue
 
             logging.info('Sanitizing %s to %s.', filepath,
@@ -45,9 +51,15 @@ def _create_parsable_gnexus_copies(search_dir):
                     del exif_dict['Exif'][piexif.ExifIFD.ISOSpeedRatings]
                     exif_bytes = piexif.dump(exif_dict)
                     piexif.insert(exif_bytes, sanitized_filepath)
+                fixed += 1
             except Exception:
                 logging.warning('Could not strip ISO from %s',
                                 sanitized_filepath)
+                errors += 1
+
+    logging.info('fix_gnexus_exif complete: scanned=%d fixed=%d '
+                 'skipped=%d errors=%d',
+                 total, fixed, skipped, errors)
 
 
 def _is_array_iso(filepath):
