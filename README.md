@@ -64,39 +64,32 @@ python3 mediaman/photoman.py \
 
 ### Journey 2: Google Takeout import (one-time)
 
-You're moving off Google Photos and want to bring your entire history into the local library.
+You're moving off Google Photos and want to bring your entire history into the local library.  The entire workflow runs on the Windows client — no server-side steps needed beyond the normal staging cron.
 
 **Step 1: Export from Google**
 
 1. Go to [takeout.google.com](https://takeout.google.com), deselect everything, select only **Google Photos**
 2. Request export — Google emails you when it's ready
-3. Download the `.zip` files to the server
+3. Download the `.zip` files and extract them to a folder on your Windows machine
 
-**Step 2: Extract and fix timestamps**
+**Step 2: Fix timestamps and copy to staging (single command)**
 
-```bash
-# Extract all Takeout ZIPs into a staging directory
-mkdir -p /library/photo_staging/google_takeout
-unzip ~/takeout-*.zip -d /library/photo_staging/google_takeout/
-
-# Google Takeout strips filesystem mtimes (sets them to 'now').
-# This script reads the .json sidecar files and restores correct
-# capture dates for videos and any photos without embedded EXIF.
-cd ~/mediaman
-python3 mediaman/google_takeout_fix_mtimes.py \
-  --src_dir /library/photo_staging/google_takeout \
-  --delete_json
+```cmd
+photocoll.exe fix-takeout --src_dir C:\Users\<user>\Downloads\takeout --staging_dir "\\<SERVER_IP>\photo_staging" --delete_json
 ```
 
-**Step 3: Ingest into the library**
+Or run from source:
 
 ```bash
-python3 mediaman/photoman.py \
-  --src_dir /library/photo_staging/google_takeout \
-  --media_dir /library \
-  --group_name library_adm \
-  --del_src
+python mediaman/photocoll.py fix-takeout --src_dir ~/Downloads/takeout --staging_dir \\<SERVER_IP>\photo_staging --delete_json
 ```
+
+This does three things in one pass:
+1. Reads `.json` sidecar files and restores correct capture dates (mtimes) for videos and EXIF-less photos
+2. Finds all actual media files (skips `.json`, `.txt`, and other non-media)
+3. Copies them to the Samba staging share
+
+**Step 3: The server picks them up** on the next hourly cron cycle and archives into `/library/photos/`.
 
 **What to expect:**
 
@@ -159,8 +152,8 @@ Each photo is indexed by MD5 hash + file size for collision-resistant dedup.
 | Script | Where it runs | Purpose |
 |---|---|---|
 | `photoman.py` | Ubuntu server | Archives photos from staging into `/library/photos/`, deduplicates by MD5+size |
-| `photocoll.py` | Windows client | Scans `~/Pictures` for new photos, copies them to the Samba staging share |
-| `google_takeout_fix_mtimes.py` | Ubuntu server | Fixes mtimes on Google Takeout exports using JSON sidecars |
+| `photocoll.py` | Windows client | Scans `~/Pictures` for new photos, copies to the Samba staging share. Also handles Google Takeout imports via `fix-takeout` subcommand. |
+| `takeout_fixer.py` | Library (used by photocoll) | Fixes mtimes on Google Takeout exports by reading `.json` sidecars |
 | `fix_gnexus_exif.py` | Ubuntu server | Fixes Galaxy Nexus ISO EXIF arrays (legacy, no-op on modern files) |
 | `flipfix.py` | Ubuntu server | One-off Flip camera timestamp fix (requires `--dir` argument) |
 
