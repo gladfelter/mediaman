@@ -160,6 +160,7 @@ class Photo():
 
     def _load_exif_metadata(self):
         """Reads EXIF data using Pillow."""
+        image = None
         try:
             image = Image.open(self.source_path)
             exif_data = image._getexif()
@@ -199,6 +200,9 @@ class Photo():
         except Exception:
             logging.warning('Unexpected error reading EXIF from %s',
                             self.source_path)
+        finally:
+            if image is not None:
+                image.close()
 
     def _load_file_size(self):
         """Gets the size in bytes of the photo from the filesystem"""
