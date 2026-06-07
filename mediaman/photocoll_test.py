@@ -558,6 +558,56 @@ class MainTests(unittest.TestCase):
             ])
         mock_fix.assert_not_called()
 
+    def test_set_last_sync_time(self):
+        """set-last-sync-time writes a timestamp to the state file."""
+        state_path = Path(self.tmpdir.name) / 'state.json'
+        src_dir = Path(self.tmpdir.name) / 'Pictures'
+        src_dir.mkdir()
+
+        photocoll.main([
+            'set-last-sync-time',
+            '--date', '2017-01-01',
+            '--src_dir', str(src_dir),
+            '--state_path', str(state_path),
+        ])
+
+        self.assertTrue(state_path.exists())
+        state = photocoll.CollectionState(state_path)
+        ts = state.get_last_collection(src_dir)
+        self.assertGreater(ts, 0)
+        # 2017-01-01 00:00:00 local time
+        import time as _time
+        expected = _time.mktime(_time.strptime('2017-01-01', '%Y-%m-%d'))
+        self.assertEqual(ts, expected)
+
+    def test_set_last_sync_time_bad_date(self):
+        """set-last-sync-time rejects non-ISO dates."""
+        state_path = Path(self.tmpdir.name) / 'state.json'
+        with self.assertRaises(SystemExit):
+            photocoll.main([
+                'set-last-sync-time',
+                '--date', 'not-a-date',
+                '--state_path', str(state_path),
+            ])
+
+    def test_set_last_sync_time_default_state_path(self):
+        """set-last-sync-time uses the default state path when omitted."""
+        src_dir = Path(self.tmpdir.name) / 'Pictures'
+        src_dir.mkdir()
+
+        # Temporarily override XDG_DATA_HOME to point at our tmpdir
+        with patch.dict(os.environ, {'XDG_DATA_HOME': str(self.tmpdir.name)}):
+            photocoll.main([
+                'set-last-sync-time',
+                '--date', '2017-01-01',
+                '--src_dir', str(src_dir),
+            ])
+
+        default_path = Path(self.tmpdir.name) / 'mediaman' / 'collection_state.json'
+        self.assertTrue(default_path.exists())
+        state = photocoll.CollectionState(default_path)
+        self.assertGreater(state.get_last_collection(src_dir), 0)
+
 
 if __name__ == '__main__':
     unittest.main()

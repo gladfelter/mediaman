@@ -13,6 +13,7 @@ Usage:
 """
 
 import argparse
+import datetime
 import json
 import logging
 import os
@@ -180,6 +181,22 @@ def copy_files(files: list[Path], dest_dir: Path) -> list[Path]:
 # ---------------------------------------------------------------------------
 
 
+def _default_state_path() -> Path:
+    """Return the platform-appropriate path for the collection state file.
+
+    Windows: %LOCALAPPDATA%/mediaman/collection_state.json
+    Other:   ~/.local/share/mediaman/collection_state.json
+    """
+    if os.name == 'nt':
+        local_appdata = os.environ.get(
+            'LOCALAPPDATA', str(Path.home() / 'AppData' / 'Local'))
+        return Path(local_appdata) / 'mediaman' / 'collection_state.json'
+    else:
+        xdg_data = os.environ.get(
+            'XDG_DATA_HOME', str(Path.home() / '.local' / 'share'))
+        return Path(xdg_data) / 'mediaman' / 'collection_state.json'
+
+
 def collect_photos(
     src_dir: Path,
     staging_dir: Path,
@@ -216,12 +233,7 @@ def collect_photos(
     """
     # Determine default state path
     if state_path is None:
-        if os.name == 'nt':
-            local_appdata = os.environ.get('LOCALAPPDATA', str(Path.home() / 'AppData' / 'Local'))
-            state_path = Path(local_appdata) / 'mediaman' / 'collection_state.json'
-        else:
-            xdg_data = os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local' / 'share'))
-            state_path = Path(xdg_data) / 'mediaman' / 'collection_state.json'
+        state_path = _default_state_path()
 
     # Load state
     state = CollectionState(state_path)
@@ -261,9 +273,10 @@ def collect_photos(
 def main(argv: list[str] | None = None) -> None:
     """Parse command-line arguments and run the appropriate command.
 
-    Supports two journeys:
+    Supports three journeys:
       - collect (default): scan ~/Pictures, copy new photos to staging
       - fix-takeout: fix Google Takeout mtimes, copy to staging
+      - set-last-sync-time: stamp state file so collect skips older files
 
     Exit codes:
         0 — success
@@ -342,6 +355,31 @@ def main(argv: list[str] | None = None) -> None:
         help='Path to write log output (in addition to stderr)',
     )
 
+    # ---- set-last-sync-time ----
+    sync_parser = sub.add_parser(
+        'set-last-sync-time',
+        help='Set last-collection timestamp so the next collect skips older files',
+    )
+    sync_parser.add_argument(
+        '--date',
+        type=str,
+        required=True,
+        metavar='YYYY-MM-DD',
+        help='ISO date to set as the last-sync time (e.g. 2017-01-01)',
+    )
+    sync_parser.add_argument(
+        '--src_dir',
+        type=Path,
+        default=default_src,
+        help='Source directory whose timestamp to set (default: ~/Pictures)',
+    )
+    sync_parser.add_argument(
+        '--state_path',
+        type=Path,
+        default=None,
+        help='Path to the JSON state file (default: platform-appropriate location)',
+    )
+
     # ---- top-level (backward compat: runs collect) ----
     parser.add_argument(
         '--src_dir',
@@ -383,6 +421,8 @@ def main(argv: list[str] | None = None) -> None:
     try:
         if args.command == 'fix-takeout':
             _cmd_fix_takeout(args)
+        elif args.command == 'set-last-sync-time':
+            _cmd_set_last_sync_time(args)
         else:
             _cmd_collect(args)
     except Exception:
@@ -446,6 +486,40 @@ def _cmd_fix_takeout(args) -> None:
     media_paths = [Path(p) for p in media_files]
     copied = copy_files(media_paths, staging_dir)
     logger.info('Copied %d file(s) to staging.', len(copied))
+
+
+def _cmd_set_last_sync_time(args) -> None:
+    """Set the last-collection timestamp in the state file.
+
+    Parses *args.date* as an ISO date (YYYY-MM-DD), converts it to a Unix
+    epoch timestamp at midnight local time, and writes it into the
+    collection state file for *args.src_dir*.
+
+    The next ``collect`` run will only pick up files modified after this
+    date — useful for skipping years of photos already in the library.
+    """
+    # Parse the date
+    try:
+        d = datetime.date.fromisoformat(args.date)
+    except ValueError as e:
+        logger.error('Invalid date "%s": %s (expected YYYY-MM-DD)',
+                      args.date, e)
+        sys.exit(1)
+    timestamp = time.mktime(d.timetuple())
+
+    # Resolve state path
+    state_path = args.state_path if args.state_path else _default_state_path()
+
+    # Load, update, save
+    state = CollectionState(state_path)
+    logger.info('Old last-collection for %s: %s',
+                args.src_dir,
+                time.ctime(state.get_last_collection(args.src_dir)) if state.get_last_collection(args.src_dir) else 'never')
+    state.set_last_collection(args.src_dir, timestamp)
+    state.save()
+
+    logger.info('Set last-collection for %s to %s (%s)',
+                args.src_dir, args.date, time.ctime(timestamp))
 
 
 def _configure_logging(log_file: Path | None = None) -> None:
