@@ -227,14 +227,51 @@ mediaman/
 
 **Dependencies:** `pathlib`, `argparse`, `json`, `logging`, `shutil` — all stdlib.
 
+### Build: PyInstaller portable .exe
+
+Since the client uses only stdlib (no native extensions), PyInstaller produces a
+single-file Windows executable with no external dependencies.
+
+```bash
+# One-time (on a Windows machine with Python):
+pip install pyinstaller
+pyinstaller --onefile --name photocoll mediaman/photocoll.py
+# Output: dist/photocoll.exe
+```
+
+This `.exe` embeds Python 3 + all imports. Drop it on any Windows machine — no
+Python installation needed.
+
 ### Deployment
-- Install Python 3.10+ on Windows (`winget install Python.Python.3.12` or python.org)
-- Clone or copy `mediaman/` to `C:\Users\<user>\mediaman\`
+- Copy `photocoll.exe` to `C:\Users\<user>\mediaman\`
 - Create Windows Task Scheduler task:
   - Trigger: At log on, repeat every 4 hours
-  - Action: `python C:\Users\<user>\mediaman\photocoll.py --staging_dir "\\192.168.8.244\photo_staging"`
+  - Action: `C:\Users\<user>\mediaman\photocoll.exe --staging_dir "\\192.168.8.244\photo_staging"`
   - Start in: `C:\Users\<user>\mediaman\`
-- State file location: `%LOCALAPPDATA%\mediaman\collection_state.json` (auto-detected via `platformdirs` or `pathlib`)
+- State file location: `%LOCALAPPDATA%\mediaman\collection_state.json`
+
+### CI: GitHub Actions Windows build
+
+```yaml
+# .github/workflows/build.yml
+on:
+  push:
+    tags: ['v*']
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install pyinstaller
+      - run: pyinstaller --onefile --name photocoll mediaman/photocoll.py
+      - uses: actions/upload-artifact@v4
+        with: { name: photocoll.exe, path: dist/photocoll.exe }
+```
+
+Tag a release (`git tag v1.0.0 && git push --tags`), GitHub builds `.exe`,
+attach to release.
 
 ---
 
