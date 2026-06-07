@@ -23,7 +23,7 @@ A family member takes photos on their Windows laptop. Those photos land in `~/Pi
 
 **On the Windows client** (first-time setup, once per machine):
 
-1. Download `photocoll.exe` from [the latest release](https://github.com/gladfelter/mediaman/releases)
+1. Download `photocoll.exe` from [the latest release](https://github.com/gladfelter/mediaman/releases/latest)
 2. Copy it to `C:\Users\<user>\mediaman\`
 3. Open **Task Scheduler** → Create Task:
    - **Trigger**: At log on, repeat every 4 hours
@@ -178,5 +178,5 @@ The Windows client is distributed as a standalone `.exe` built by GitHub Actions
    git tag v1.0.0
    git push origin v1.0.0
    ```
-3. GitHub Actions builds `photocoll.exe` (Windows VM, ~2 minutes)
-4. Download from: **Actions → latest workflow run → Artifacts → photocoll.exe**
+3. GitHub Actions builds `photocoll.exe` (Windows VM, ~1 minute) and attaches it to a new [Release](https://github.com/gladfelter/mediaman/releases)
+4. Download from: **Releases → latest → photocoll.exe**

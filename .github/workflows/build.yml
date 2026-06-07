@@ -14,7 +14,6 @@ jobs:
           python-version: '3.12'
       - run: pip install pyinstaller
       - run: pyinstaller --onefile --name photocoll mediaman/photocoll.py
-      - uses: actions/upload-artifact@v4
+      - uses: softprops/action-gh-release@v2
         with:
-          name: photocoll.exe
-          path: dist/photocoll.exe
+          files: dist/photocoll.exe
