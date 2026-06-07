@@ -9,6 +9,7 @@ Photo library management for the Gladfelter home server.
 | `photoman.py` | Ubuntu server | Archives photos from staging into `/library/photos/`, deduplicates by MD5+size |
 | `photocoll.py` | Windows client | Scans `~/Pictures` for new photos, copies them to the Samba staging share |
 | `fix_gnexus_exif.py` | Ubuntu server | Fixes Galaxy Nexus ISO EXIF arrays (legacy, no-op on modern files) |
+| `google_takeout_fix_mtimes.py` | Ubuntu server | Fixes mtimes on Google Takeout exports using JSON sidecars |
 | `flipfix.py` | Ubuntu server | One-off Flip camera timestamp fix (requires `--dir` argument) |
 
 ### Architecture
@@ -25,6 +26,22 @@ Windows PC [photocoll.py]          Ubuntu server <SERVER_IP>
 ```
 
 ## Running
+
+### Google Takeout import (one-time)
+```bash
+# 1. Download Google Takeout, extract to staging
+# 2. Fix mtimes on videos and EXIF-less photos from JSON sidecars
+python3 mediaman/google_takeout_fix_mtimes.py \
+  --src_dir /library/photo_staging/google_takeout \
+  --delete_json
+
+# 3. Ingest into the library
+python3 mediaman/photoman.py \
+  --src_dir /library/photo_staging/google_takeout \
+  --media_dir /library \
+  --group_name library_adm \
+  --del_src
+```
 
 ### Server (Ubuntu)
 ```bash
