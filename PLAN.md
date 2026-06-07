@@ -252,26 +252,12 @@ Python installation needed.
 
 ### CI: GitHub Actions Windows build
 
-```yaml
-# .github/workflows/build.yml
-on:
-  push:
-    tags: ['v*']
-jobs:
-  build:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
-      - run: pip install pyinstaller
-      - run: pyinstaller --onefile --name photocoll mediaman/photocoll.py
-      - uses: actions/upload-artifact@v4
-        with: { name: photocoll.exe, path: dist/photocoll.exe }
-```
+Workflow file: `.github/workflows/build.yml` (already in repo).
 
-Tag a release (`git tag v1.0.0 && git push --tags`), GitHub builds `.exe`,
-attach to release.
+Triggered on version tags (`v*`). Builds `photocoll.exe` on a Windows VM with
+PyInstaller and uploads it as a workflow artifact.
+
+Release process documented in `mediaman/README.md`.
 
 ---
 
