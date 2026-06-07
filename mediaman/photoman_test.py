@@ -171,12 +171,29 @@ class PhotoManFunctionalTests(unittest.TestCase):
         finally:
             shutil.rmtree(tmpdir)
 
-    @patch('shutil.copy2')
-    @patch('os.path.exists')
-    def test_copy_file(self, exists, copy2):
-        exists.side_effect = [True, False]
+    @patch('shutil.copystat')
+    @patch('os.close')
+    @patch('os.write')
+    @patch('builtins.open')
+    @patch('os.open')
+    @patch('os.makedirs')
+    def test_copy_file(self, makedirs, os_open, builtin_open, os_write, os_close, copystat):
+        # Simulate collision: first O_EXCL fails, second succeeds
+        os_open.side_effect = [FileExistsError, 42]
+        # Mock the file read to return empty bytes (simulate EOF)
+        mock_file = MagicMock()
+        mock_file.read.return_value = b''
+        builtin_open.return_value.__enter__.return_value = mock_file
         photoman._copy_file('/tmp/foo.txt', '/tmp/blah')
-        copy2.assert_called_with('/tmp/foo.txt', '/tmp/blah/foo_1.txt')
+        makedirs.assert_called_with('/tmp/blah', exist_ok=True)
+        # Second call should be the resolved path with _1 suffix
+        os_open.assert_has_calls([
+            call('/tmp/blah/foo.txt',
+                      os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644),
+            call('/tmp/blah/foo_1.txt',
+                      os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644),
+        ])
+        copystat.assert_called_with('/tmp/foo.txt', '/tmp/blah/foo_1.txt')
 
     def _get_row_count(self, repository):
         cur = repository.con.cursor()

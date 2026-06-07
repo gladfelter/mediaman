@@ -208,9 +208,9 @@ class Photo():
         except (IOError, OSError) as e:
             logging.warning("%s: cannot read EXIF: %s",
                             self.source_path, e)
-        except Exception:
-            logging.warning('Unexpected error reading EXIF from %s',
-                            self.source_path)
+        except Exception as e:
+            logging.warning('Unexpected error reading EXIF from %s: %s',
+                            self.source_path, e)
         finally:
             if image is not None:
                 image.close()
@@ -247,19 +247,38 @@ class Photo():
 
 
 def configure_logging(filename):
-    """Configures logging to stderr, file."""
+    """Configures logging to stderr, and to a file under /var/log/mediaman/.
+
+    The log directory is created with restricted permissions (0o700) if it
+    does not exist.  If the directory cannot be created or is unwritable,
+    file logging is silently skipped (stderr logging remains intact).
+    """
     root = logging.getLogger('')
-    root.handlers.clear()
-    handler = logging.StreamHandler(sys.stderr)
+    # Close and remove existing handlers before reconfiguring
+    for h in list(root.handlers):
+        h.close()
+        root.removeHandler(h)
+    root.setLevel(logging.INFO)
+
     formatter = logging.Formatter('%(asctime)s %(filename)s'
                                   ':%(lineno)d %(levelname)s %(message)s')
-    handler.setFormatter(formatter)
-    root.addHandler(handler)
-    log_dir = '/var/tmp'
-    file_handler = logging.FileHandler(os.path.join(log_dir, filename))
-    file_handler.setFormatter(formatter)
-    root.addHandler(file_handler)
-    root.setLevel(logging.INFO)
+
+    # Always log to stderr
+    stderr_handler = logging.StreamHandler(sys.stderr)
+    stderr_handler.setFormatter(formatter)
+    root.addHandler(stderr_handler)
+
+    # Log to file under a restricted directory
+    log_dir = '/var/log/mediaman'
+    try:
+        if not os.path.isdir(log_dir):
+            os.makedirs(log_dir, mode=0o700, exist_ok=True)
+        file_handler = logging.FileHandler(os.path.join(log_dir, filename))
+        file_handler.setFormatter(formatter)
+        root.addHandler(file_handler)
+    except OSError as e:
+        logging.warning('Could not set up file logging in %s: %s',
+                        log_dir, e)
 
 
 def get_group_id(group_name):
@@ -269,3 +288,19 @@ def get_group_id(group_name):
     else:
         # means 'don't change group'
         return -1
+
+
+def compute_md5(filepath):
+    """Compute the MD5 hex digest of *filepath* without reading EXIF.
+
+    Reads the file in 8192-byte chunks to avoid loading large files into
+    memory.  Returns the lower-case hex digest string.
+    """
+    md5_hash = hashlib.md5()
+    with open(filepath, 'rb') as fh:
+        while True:
+            chunk = fh.read(8192)
+            if not chunk:
+                break
+            md5_hash.update(chunk)
+    return md5_hash.hexdigest()
