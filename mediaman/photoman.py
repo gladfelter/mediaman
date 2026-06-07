@@ -35,41 +35,46 @@ def _find_and_archive_photos(search_dir, lib_base_dir,
                                 '%s, it will not be modified', path)
                 continue
 
-            photo = media_common.Photo(path)
-            photo.load_metadata()
-            if photo.md5 is None:
-                logging.warning('Could not compute hash for %s, skipping',
-                                path)
-                continue
+            try:
+                photo = media_common.Photo(path)
+                photo.load_metadata()
+                if photo.md5 is None:
+                    logging.warning('Could not compute hash for %s, skipping',
+                                    path)
+                    continue
 
-            db_result = rep.lookup_hash(photo.md5, size=photo.size)
-            if (db_result is not None
-                    and os.path.abspath(db_result[1]) == os.path.abspath(path)):
-                logging.info('Found existing archived photo %s, ignoring',
-                             db_result[1])
-            elif (db_result is not None
-                  and os.path.isfile(db_result[1])
-                  and delete_source_on_success):
-                logging.info('Deleting the source file %s, which is a '
-                             'duplicate of existing file %s',
-                             photo.source_path, db_result[1])
-                os.remove(photo.source_path)
-            elif (db_result is not None
-                  and os.path.isfile(db_result[1])):
-                logging.info('Ignoring the source file %s, which is a '
-                             'duplicate of existing file %s',
-                             photo.source_path, db_result[1])
-            elif db_result is not None:
-                logging.info('Photo %s was deleted from the archive, '
-                             'replacing it with the new one.', db_result[1])
-                if (_archive_photo(photo, lib_base_dir, rep, group_id)
-                        and delete_source_on_success):
-                    files_to_delete.append(photo.source_path)
-            else:
-                archive_count += 1
-                if (_archive_photo(photo, lib_base_dir, rep, group_id)
-                        and delete_source_on_success):
-                    files_to_delete.append(photo.source_path)
+                db_result = rep.lookup_hash(photo.md5, size=photo.size)
+                if (db_result is not None
+                        and os.path.abspath(db_result[1])
+                        == os.path.abspath(path)):
+                    logging.info('Found existing archived photo %s, ignoring',
+                                 db_result[1])
+                elif (db_result is not None
+                      and os.path.isfile(db_result[1])
+                      and delete_source_on_success):
+                    logging.info('Deleting the source file %s, which is a '
+                                 'duplicate of existing file %s',
+                                 photo.source_path, db_result[1])
+                    os.remove(photo.source_path)
+                elif (db_result is not None
+                      and os.path.isfile(db_result[1])):
+                    logging.info('Ignoring the source file %s, which is a '
+                                 'duplicate of existing file %s',
+                                 photo.source_path, db_result[1])
+                elif db_result is not None:
+                    logging.info('Photo %s was deleted from the archive, '
+                                 'replacing it with the new one.',
+                                 db_result[1])
+                    if (_archive_photo(photo, lib_base_dir, rep, group_id)
+                            and delete_source_on_success):
+                        files_to_delete.append(photo.source_path)
+                else:
+                    archive_count += 1
+                    if (_archive_photo(photo, lib_base_dir, rep, group_id)
+                            and delete_source_on_success):
+                        files_to_delete.append(photo.source_path)
+            except Exception:
+                logging.exception('Error processing file %s, skipping', path)
 
     rep.close()
     for filepath in files_to_delete:
@@ -85,10 +90,8 @@ def _archive_photo(photo, lib_base_dir, repository, group_id):
     _copy_photo(photo, lib_base_dir, group_id)
     photo.db_id = repository.add_or_update(photo)
     if photo.db_id > 0 and os.path.isfile(photo.archive_path):
-        dest_photo = media_common.Photo(photo.archive_path)
-        dest_photo.load_metadata()
-        if (dest_photo.md5 is not None
-                and dest_photo.md5 == photo.md5):
+        dest_md5 = media_common.compute_md5(photo.archive_path)
+        if dest_md5 == photo.md5:
             logging.info('%s was successfully copied to destination %s',
                          photo.source_path, photo.archive_path)
             return True
@@ -128,19 +131,38 @@ def _copy_photo(photo, lib_base_dir, group_id):
 
 def _copy_file(filepath, dest_dir):
     """Copies a file, keeping its metadata and renaming it if there's a
-    conflict."""
+    conflict.
+
+    Uses ``O_EXCL`` (exclusive create) on the final destination to avoid
+    TOCTOU races when multiple processes target the same path.
+    """
+    os.makedirs(dest_dir, exist_ok=True)
     _dirname, filename = os.path.split(filepath)
     prefix, suffix = os.path.splitext(filename)
-    counter = 1
     destpath = os.path.join(dest_dir, filename)
-    while os.path.exists(destpath):
-        destpath = os.path.join(dest_dir,
-                                prefix + '_' + str(counter) + suffix)
-        counter += 1
-    if counter != 1:
+    counter = 0
+    while True:
+        try:
+            fd = os.open(destpath,
+                         os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+            break
+        except FileExistsError:
+            counter += 1
+            destpath = os.path.join(dest_dir,
+                                    prefix + '_' + str(counter) + suffix)
+    try:
+        with open(filepath, 'rb') as src:
+            while True:
+                chunk = src.read(8192)
+                if not chunk:
+                    break
+                os.write(fd, chunk)
+    finally:
+        os.close(fd)
+    shutil.copystat(filepath, destpath)
+    if counter > 0:
         logging.info('file %s had to be renamed to %s to avoid a conflict.',
                      filepath, destpath)
-    shutil.copy2(filepath, destpath)
     return destpath
 
 

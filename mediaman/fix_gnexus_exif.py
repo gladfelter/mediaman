@@ -28,14 +28,19 @@ def _create_parsable_gnexus_copies(search_dir):
     fixed = 0
     errors = 0
     skipped = 0
+    non_photo = 0
     for (dirpath, _dirnames, filenames) in os.walk(search_dir):
         total += len(filenames)
         for filename in filenames:
             filepath = os.path.join(dirpath, filename)
-            prefix, suffix = os.path.splitext(filepath)
-            if not _is_array_iso(filepath):
+            array_iso, is_photo = _is_array_iso(filepath)
+            if not is_photo:
+                non_photo += 1
+                continue
+            if not array_iso:
                 continue
 
+            prefix, suffix = os.path.splitext(filepath)
             sanitized_filepath = os.path.join(
                 dirpath, '%s_isoremoved%s' % (prefix, suffix))
             if os.path.exists(sanitized_filepath):
@@ -58,35 +63,31 @@ def _create_parsable_gnexus_copies(search_dir):
                 errors += 1
 
     logging.info('fix_gnexus_exif complete: scanned=%d fixed=%d '
-                 'skipped=%d errors=%d',
-                 total, fixed, skipped, errors)
+                 'skipped=%d non_photo=%d errors=%d',
+                 total, fixed, skipped, non_photo, errors)
 
 
 def _is_array_iso(filepath):
-    """Returns True if the photo contains an array of multiple ISO values."""
+    """Returns (is_array_iso, is_photo).
+
+    is_array_iso — True if the file has a multi-valued ISO EXIF tag.
+    is_photo     — False if the file could not be parsed as an EXIF image
+                   at all (e.g. non-JPEG, corrupt, permissions error).
+    """
     try:
         exif_dict = piexif.load(filepath)
         iso = exif_dict.get('Exif', {}).get(piexif.ExifIFD.ISOSpeedRatings)
         if iso is not None and not isinstance(iso, int):
-            return True
-        return False
+            return (True, True)
+        return (False, True)
     except Exception:
-        return False
+        logging.debug('Skipping non-photo or unparseable file: %s', filepath)
+        return (False, False)
 
 
 def _configure_logging():
     """Configures logging to stderr, file."""
-    root = logging.getLogger('')
-    root.handlers.clear()
-    handler = logging.StreamHandler(sys.stderr)
-    formatter = logging.Formatter('%(asctime)s %(filename)s'
-                                  ':%(lineno)d %(levelname)s %(message)s')
-    handler.setFormatter(formatter)
-    root.addHandler(handler)
-    file_handler = logging.FileHandler('/var/tmp/fix_gnexus_exif.log')
-    file_handler.setFormatter(formatter)
-    root.addHandler(file_handler)
-    root.setLevel(logging.INFO)
+    media_common.configure_logging('fix_gnexus_exif.log')
 
 
 def main():

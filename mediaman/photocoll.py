@@ -53,9 +53,21 @@ class CollectionState:
         self._data[str(src_dir)] = timestamp
 
     def save(self) -> None:
-        """Persist the current state to disk."""
-        self._state_path.parent.mkdir(parents=True, exist_ok=True)
-        self._state_path.write_text(json.dumps(self._data, indent=2))
+        """Persist the current state to disk.
+
+        If the state file cannot be written (disk full, permissions), a
+        warning is logged but the program does not crash — the trade-off
+        is that the next run will re-scan and re-copy already-copied files
+        (harmless thanks to destination collision handling).
+        """
+        try:
+            self._state_path.parent.mkdir(parents=True, exist_ok=True)
+            self._state_path.write_text(json.dumps(self._data, indent=2))
+        except (OSError, TypeError) as e:
+            logger.warning(
+                'Could not save collection state to %s: %s',
+                self._state_path, e,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +84,16 @@ def find_new_photos(
 
     Files whose extension (case-insensitive) appears in *ignore_extensions*
     are skipped.  Files whose mtime cannot be read are silently skipped.
+
+    A small epsilon (0.001 s) is subtracted from *last_collection* to
+    avoid floating-point comparison edge cases.  Note: on filesystems
+    with 1-second mtime granularity (FAT32, some NAS/Samba configs),
+    files created in the same whole second as the last collection may
+    be missed.  This is accepted as a known limitation.
     """
+    # Tiny epsilon for floating-point comparison robustness.
+    effective_cutoff = last_collection - 0.001
+
     results: list[Path] = []
     for dirpath_str, _dirnames, filenames in os.walk(str(src_dir)):
         dirpath = Path(dirpath_str)
@@ -86,7 +107,7 @@ def find_new_photos(
             except OSError:
                 logger.warning('Could not read mtime for %s, skipping', filepath)
                 continue
-            if mtime > last_collection:
+            if mtime > effective_cutoff:
                 logger.info(
                     'Found new photo: %s (mtime=%s)',
                     filepath,
@@ -108,6 +129,9 @@ def copy_files(files: list[Path], dest_dir: Path) -> list[Path]:
     ``name_N.suffix`` where N is the smallest integer that avoids a
     collision (1, 2, 3, …).
 
+    Uses ``O_EXCL`` (exclusive create) on the final destination to avoid
+    TOCTOU races when multiple processes target the same path.
+
     Returns a list of destination Paths for the successfully copied files.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -116,15 +140,29 @@ def copy_files(files: list[Path], dest_dir: Path) -> list[Path]:
         stem = src.stem
         suffix = src.suffix
         dest = dest_dir / src.name
-        counter = 1
-        while dest.exists():
-            dest = dest_dir / f'{stem}_{counter}{suffix}'
-            counter += 1
-        if counter > 1:
+        counter = 0
+        while True:
+            try:
+                fd = os.open(str(dest),
+                             os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+                break
+            except FileExistsError:
+                counter += 1
+                dest = dest_dir / f'{stem}_{counter}{suffix}'
+        try:
+            with open(str(src), 'rb') as fsrc:
+                while True:
+                    chunk = fsrc.read(8192)
+                    if not chunk:
+                        break
+                    os.write(fd, chunk)
+        finally:
+            os.close(fd)
+        shutil.copystat(str(src), str(dest))
+        if counter > 0:
             logger.info(
                 'Renamed %s → %s to avoid collision', src.name, dest.name
             )
-        shutil.copy2(src, dest)
         copied.append(dest)
     return copied
 

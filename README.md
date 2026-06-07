@@ -9,15 +9,15 @@ Photo library management for the Gladfelter home server.
 | `photoman.py` | Ubuntu server | Archives photos from staging into `/library/photos/`, deduplicates by MD5+size |
 | `photocoll.py` | Windows client | Scans `~/Pictures` for new photos, copies them to the Samba staging share |
 | `fix_gnexus_exif.py` | Ubuntu server | Fixes Galaxy Nexus ISO EXIF arrays (legacy, no-op on modern files) |
-| `flipfix.py` | Ubuntu server | One-off Flip camera timestamp fix |
+| `flipfix.py` | Ubuntu server | One-off Flip camera timestamp fix (requires `--dir` argument) |
 
 ### Architecture
 
 ```
-Windows PC [photocoll.py]          Ubuntu server 192.168.8.244
+Windows PC [photocoll.py]          Ubuntu server <SERVER_IP>
      │                                    │
      │  copies new photos to:             │
-     └──→ \\192.168.8.244\photo_staging ──→ photoman.py (cron, hourly)
+     └──→ \\<SERVER_IP>\photo_staging ──→ photoman.py (cron, hourly)
                                           │
                                           ├─ dedup (MD5 + file size)
                                           ├─ archive to /library/photos/YYYY/MM_Name/
@@ -38,10 +38,10 @@ python3 photoman.py --src_dir /library/photo_staging --media_dir /library --grou
 ### Client (Windows)
 ```bash
 # Run from source:
-python mediaman/photocoll.py --staging_dir "\\192.168.8.244\photo_staging"
+python mediaman/photocoll.py --staging_dir "\\<SERVER_IP>\photo_staging"
 
 # Or use the pre-built .exe (see Release below):
-photocoll.exe --staging_dir "\\192.168.8.244\photo_staging"
+photocoll.exe --staging_dir "\\<SERVER_IP>\photo_staging"
 ```
 
 ## Tests
@@ -72,7 +72,7 @@ The Windows client is distributed as a standalone `.exe` built by GitHub Actions
    - **Trigger**: At log on, repeat every 4 hours
    - **Action**: Start a program
    - **Program**: `C:\Users\<user>\mediaman\photocoll.exe`
-   - **Arguments**: `--staging_dir "\\192.168.8.244\photo_staging"`
+   - **Arguments**: `--staging_dir "\\<SERVER_IP>\photo_staging"`
 3. State is tracked in `%LOCALAPPDATA%\mediaman\collection_state.json`
 
 No Python installation required on the client machine.
