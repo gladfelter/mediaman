@@ -149,7 +149,7 @@ And files are copied successfully
         └──────────┘
 ```
 
-### Test file: `test_photocoll.py` (replaces `photocoll_test.py`)
+### Test file: `photocoll_test.py` (update in place, keep existing name)
 
 **Phase 1: Unit tests (write first, no implementation)**
 
@@ -183,7 +183,7 @@ And files are copied successfully
 - All file I/O tests use `tempfile.TemporaryDirectory` — cleaned up automatically
 - No Windows-specific paths in tests; use `pathlib.Path` objects
 - Tests run on Linux (WSL) and Windows
-- Run with `python -m pytest test_photocoll.py -v` (add `pytest` as dev dependency)
+- Run with `./run_tests.sh` (uses `python3 -m unittest discover -p '*_test.py'`)
 
 ### TDD sequence
 1. Write `test_find_new_photos_*` → fail
@@ -205,10 +205,8 @@ And files are copied successfully
 ```
 mediaman/
 ├── photocoll.py          # Ported client (rewrite)
-├── test_photocoll.py     # New test file (replaces photocoll_test.py)
-├── photocoll_test.py     # Delete (replaced by test_photocoll.py)
-├── requirements-dev.txt  # pytest (dev dependency)
-└── run_tests.sh          # Update to include new test file
+├── photocoll_test.py     # Updated test file (port existing tests, add new ones)
+└── run_tests.sh          # Already discovers *_test.py — no changes needed
 ```
 
 ### Module: `photocoll.py`
