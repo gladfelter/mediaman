@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import google_takeout_fix_mtimes as fixer
+import takeout_fixer as fixer
 
 
 class FixMtimesTests(unittest.TestCase):
@@ -45,7 +45,7 @@ class FixMtimesTests(unittest.TestCase):
         # Verify mtime was actually set
         self.assertEqual(int(os.path.getmtime(str(media))), ts)
 
-    @patch.object(fixer, '_has_exif_date', return_value=True)
+    @patch.object(fixer, 'has_exif_date', return_value=True)
     def test_skips_exif_photo(self, mock_has_exif):
         """Photos with EXIF dates are left alone."""
         ts = 9999999999
@@ -120,6 +120,29 @@ class FixMtimesTests(unittest.TestCase):
         self.assertEqual(fixed, 2)
         self.assertEqual(ok, 0)
         self.assertEqual(skipped, 0)
+
+    def test_iter_media_files_filters_json(self):
+        """iter_media_files returns media files, not JSON sidecars."""
+        self._write_file('photo.jpg')
+        self._write_file('video.mp4')
+        self._write_file('notes.txt')
+        self._write_file('sidecar.json')
+
+        results = fixer.iter_media_files(str(self.src_dir))
+        names = {os.path.basename(p) for p in results}
+        self.assertIn('photo.jpg', names)
+        self.assertIn('video.mp4', names)
+        self.assertNotIn('notes.txt', names)
+        self.assertNotIn('sidecar.json', names)
+
+    def test_iter_media_files_nested(self):
+        """iter_media_files recurses into subdirectories."""
+        self._write_file('a/photo.jpg')
+        self._write_file('b/sub/video.mp4')
+        self._write_file('a/photo.jpg.json')
+
+        results = fixer.iter_media_files(str(self.src_dir))
+        self.assertEqual(len(results), 2)
 
 
 if __name__ == '__main__':

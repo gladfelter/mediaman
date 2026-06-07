@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """Photo collection utility — scans ~/Pictures and syncs new photos to staging.
 
+Commands:
+    (default)      Scan ~/Pictures for new photos, copy to Samba staging share
+    collect        Same as default — explicit form
+    fix-takeout    Fix mtimes on Google Takeout exports, copy to staging
+
 Usage:
-    python photocoll.py --staging_dir \\\\192.168.8.244\\photo_staging
-    python photocoll.py --staging_dir /mnt/staging --src_dir ~/Photos
+    python photocoll.py --staging_dir \\\\<SERVER_IP>\\photo_staging
+    python photocoll.py collect --staging_dir \\\\<SERVER_IP>\\photo_staging
+    python photocoll.py fix-takeout --src_dir ~/Downloads/takeout --staging_dir \\\\<SERVER_IP>\\photo_staging
 """
 
 import argparse
@@ -14,6 +20,8 @@ import shutil
 import sys
 import time
 from pathlib import Path
+
+import takeout_fixer
 
 logger = logging.getLogger(__name__)
 
@@ -251,7 +259,11 @@ def collect_photos(
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Parse command-line arguments and run photo collection.
+    """Parse command-line arguments and run the appropriate command.
+
+    Supports two journeys:
+      - collect (default): scan ~/Pictures, copy new photos to staging
+      - fix-takeout: fix Google Takeout mtimes, copy to staging
 
     Exit codes:
         0 — success
@@ -263,6 +275,74 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description='Scan a directory for new photos and copy them to staging.',
     )
+    sub = parser.add_subparsers(dest='command')
+
+    # ---- collect ----
+    collect_parser = sub.add_parser(
+        'collect',
+        help='Scan ~/Pictures for new photos and copy to staging (default)',
+    )
+    collect_parser.add_argument(
+        '--src_dir',
+        type=Path,
+        default=default_src,
+        help='Directory to scan for photos (default: ~/Pictures)',
+    )
+    collect_parser.add_argument(
+        '--staging_dir',
+        type=Path,
+        required=True,
+        help='Destination directory for staging (e.g. Samba share path)',
+    )
+    collect_parser.add_argument(
+        '--ignore_extensions',
+        type=str,
+        default='.ini,.db',
+        help='Comma-separated extensions to skip (default: .ini,.db)',
+    )
+    collect_parser.add_argument(
+        '--state_path',
+        type=Path,
+        default=None,
+        help='Path to the JSON state file (default: platform-appropriate location)',
+    )
+    collect_parser.add_argument(
+        '--log_file',
+        type=Path,
+        default=None,
+        help='Path to write log output (in addition to stderr)',
+    )
+
+    # ---- fix-takeout ----
+    fix_parser = sub.add_parser(
+        'fix-takeout',
+        help='Fix Google Takeout mtimes and copy media to staging',
+    )
+    fix_parser.add_argument(
+        '--src_dir',
+        type=Path,
+        required=True,
+        help='Directory containing the extracted Google Takeout files',
+    )
+    fix_parser.add_argument(
+        '--staging_dir',
+        type=Path,
+        required=True,
+        help='Destination directory for staging (e.g. Samba share path)',
+    )
+    fix_parser.add_argument(
+        '--delete_json',
+        action='store_true',
+        help='Delete JSON sidecar files after successfully fixing mtimes',
+    )
+    fix_parser.add_argument(
+        '--log_file',
+        type=Path,
+        default=None,
+        help='Path to write log output (in addition to stderr)',
+    )
+
+    # ---- top-level (backward compat: runs collect) ----
     parser.add_argument(
         '--src_dir',
         type=Path,
@@ -272,7 +352,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         '--staging_dir',
         type=Path,
-        required=True,
+        default=None,
         help='Destination directory for staging (e.g. Samba share path)',
     )
     parser.add_argument(
@@ -297,30 +377,75 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     # Configure logging
-    _configure_logging(args.log_file)
+    log_file = args.log_file
+    _configure_logging(log_file)
 
-    # Parse ignore extensions
+    try:
+        if args.command == 'fix-takeout':
+            _cmd_fix_takeout(args)
+        else:
+            _cmd_collect(args)
+    except Exception:
+        logger.exception('Photo collection failed with an unexpected error')
+        sys.exit(2)
+
+
+def _cmd_collect(args) -> None:
+    """Run the collect journey (scan ~/Pictures → staging)."""
+    if args.staging_dir is None:
+        logger.error('--staging_dir is required')
+        sys.exit(1)
+
     ignore_extensions = {
-        ext.strip().lower() if ext.strip().startswith('.') else f'.{ext.strip().lower()}'
+        ('.' + ext.strip().lower()) if not ext.strip().startswith('.') else ext.strip().lower()
         for ext in args.ignore_extensions.split(',')
         if ext.strip()
     }
 
-    try:
-        collected = collect_photos(
-            src_dir=args.src_dir,
-            staging_dir=args.staging_dir,
-            ignore_extensions=ignore_extensions,
-            state_path=args.state_path,
-            log_file=args.log_file,
-        )
-        if collected:
-            logger.info('Successfully copied %d file(s).', len(collected))
-        else:
-            logger.info('No files needed copying.')
-    except Exception:
-        logger.exception('Photo collection failed with an unexpected error')
-        sys.exit(2)
+    collected = collect_photos(
+        src_dir=args.src_dir,
+        staging_dir=args.staging_dir,
+        ignore_extensions=ignore_extensions,
+        state_path=args.state_path,
+        log_file=args.log_file,
+    )
+    if collected:
+        logger.info('Successfully copied %d file(s).', len(collected))
+    else:
+        logger.info('No files needed copying.')
+
+
+def _cmd_fix_takeout(args) -> None:
+    """Run the Google Takeout journey (fix mtimes → staging)."""
+    src_dir = str(args.src_dir)
+    staging_dir = args.staging_dir
+
+    if not os.path.isdir(src_dir):
+        logger.error('%s is not a directory', src_dir)
+        sys.exit(1)
+
+    # Step 1: Fix mtimes from JSON sidecars
+    logger.info('Fixing mtimes from Google Takeout JSON sidecars...')
+    fixed, already_ok, skipped = takeout_fixer.fix_mtimes(
+        src_dir, delete_json=args.delete_json,
+    )
+    logger.info(
+        'Mtimes: %d fixed, %d already had EXIF dates, %d skipped',
+        fixed, already_ok, skipped,
+    )
+
+    # Step 2: Find all media files (non-JSON)
+    media_files = takeout_fixer.iter_media_files(src_dir)
+    if not media_files:
+        logger.info('No media files found in %s', src_dir)
+        return
+
+    logger.info('Copying %d media file(s) to staging...', len(media_files))
+
+    # Step 3: Copy to staging
+    media_paths = [Path(p) for p in media_files]
+    copied = copy_files(media_paths, staging_dir)
+    logger.info('Copied %d file(s) to staging.', len(copied))
 
 
 def _configure_logging(log_file: Path | None = None) -> None:

@@ -518,6 +518,46 @@ class MainTests(unittest.TestCase):
         _, kwargs = mock_collect.call_args
         self.assertEqual(kwargs['log_file'], Path(log))
 
+    @patch('photocoll.copy_files')
+    @patch('takeout_fixer.iter_media_files')
+    @patch('takeout_fixer.fix_mtimes')
+    def test_fix_takeout_subcommand(self, mock_fix, mock_iter, mock_copy):
+        """fix-takeout subcommand runs mtime fix + copy."""
+        staging = str(Path(self.tmpdir.name) / 'staging')
+        src = str(Path(self.tmpdir.name) / 'takeout')
+        os.makedirs(src, exist_ok=True)
+
+        mock_fix.return_value = (5, 10, 2)
+        mock_iter.return_value = [
+            os.path.join(src, 'photo.jpg'),
+            os.path.join(src, 'video.mp4'),
+        ]
+
+        photocoll.main([
+            'fix-takeout',
+            '--src_dir', src,
+            '--staging_dir', staging,
+            '--delete_json',
+        ])
+
+        mock_fix.assert_called_once_with(src, delete_json=True)
+        mock_iter.assert_called_once_with(src)
+        mock_copy.assert_called_once()
+        copied_paths = mock_copy.call_args[0][0]
+        self.assertEqual(len(copied_paths), 2)
+
+    @patch('takeout_fixer.fix_mtimes')
+    def test_fix_takeout_bad_src_dir(self, mock_fix):
+        """fix-takeout with nonexistent src_dir exits with error."""
+        staging = str(Path(self.tmpdir.name) / 'staging')
+        with self.assertRaises(SystemExit):
+            photocoll.main([
+                'fix-takeout',
+                '--src_dir', '/nonexistent/path',
+                '--staging_dir', staging,
+            ])
+        mock_fix.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()
