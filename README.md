@@ -38,7 +38,7 @@ python3 photoman.py --src_dir /library/photo_staging --media_dir /library --grou
 ### Client (Windows)
 ```bash
 # Run from source:
-python photocoll.py --staging_dir "\\192.168.8.244\photo_staging"
+python mediaman/photocoll.py --staging_dir "\\192.168.8.244\photo_staging"
 
 # Or use the pre-built .exe (see Release below):
 photocoll.exe --staging_dir "\\192.168.8.244\photo_staging"
